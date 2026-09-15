@@ -1,0 +1,8 @@
+target/
+.idea/
+*.iml
+.env
+.DS_Store
+node_modules/
+coverage/
+logs/

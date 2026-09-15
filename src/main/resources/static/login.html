@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · Rucodel Production Planning</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-panel">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <div>
+          <p class="eyebrow">Rucodel</p>
+          <h1>Production Planning</h1>
+        </div>
+      </div>
+
+      <form id="login-form" class="form-grid">
+        <label>Utilizador
+          <input id="username" name="username" autocomplete="username" required>
+        </label>
+        <label>Palavra-passe
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Entrar</button>
+        <p id="login-message" class="message hidden" role="alert"></p>
+      </form>
+    </section>
+  </main>
+  <script src="js/api.js"></script>
+  <script src="js/login.js"></script>
+</body>
+</html>

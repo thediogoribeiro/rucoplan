@@ -1,0 +1,308 @@
+package pt.rucodel.productionplanning.integration;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import pt.rucodel.productionplanning.domain.*;
+import pt.rucodel.productionplanning.entity.*;
+import pt.rucodel.productionplanning.repository.*;
+import pt.rucodel.productionplanning.telegram.*;
+
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class TelegramFlowIntegrationTest {
+    @jakarta.annotation.Resource MockMvc mockMvc;
+    @jakarta.annotation.Resource TelegramUpdateProcessor processor;
+    @jakarta.annotation.Resource FakeTelegramBotClient bot;
+    @jakarta.annotation.Resource DriverRepository drivers;
+    @jakarta.annotation.Resource CustomerReferenceRepository customers;
+    @jakarta.annotation.Resource WheelIntakeRequestRepository requests;
+    @jakarta.annotation.Resource TelegramConversationRepository conversations;
+    @jakarta.annotation.Resource TelegramIntakeDraftRepository drafts;
+    @jakarta.annotation.Resource TelegramInboundUpdateRepository inboundUpdates;
+    @jakarta.annotation.Resource CapacityAlertRepository capacityAlerts;
+    @jakarta.annotation.Resource DailyProductionSettingsRepository settings;
+    @jakarta.annotation.Resource ProductionPlanRepository plans;
+    @jakarta.annotation.Resource ProductionPlanItemRepository planItems;
+    @jakarta.annotation.Resource RequestStatusHistoryRepository history;
+    @jakarta.annotation.Resource PlanningAuditEventRepository audit;
+    @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
+
+    private CustomerReferenceEntity customer;
+
+    @BeforeEach
+    void setUp() {
+        bot.clear();
+        inboundUpdates.deleteAll();
+        conversations.deleteAll();
+        drafts.deleteAll();
+        capacityAlerts.deleteAll();
+        planItems.deleteAll();
+        plans.deleteAll();
+        history.deleteAll();
+        audit.deleteAll();
+        whatsapp.deleteAll();
+        requests.deleteAll();
+        settings.deleteAll();
+        customers.deleteAll();
+        drivers.deleteAll();
+
+        customer = customers.save(customer("C1001", "Oficina Central Braga"));
+        settings.save(settings(LocalDate.of(2099, 9, 10), 20));
+    }
+
+    @Test
+    void newTelegramUserCreatesDriverAndDoesNotCreateDuplicatesWhenUsernameChanges() {
+        process(1, 9001L, 7001L, "olduser", "/start");
+
+        assertThat(bot.last()).contains("Bem-vindo ao planeamento da Rucodel");
+        assertThat(drivers.findByTelegramUserId(9001L)).isEmpty();
+
+        process(2, 9001L, 7001L, "olduser", "  João   Martins ");
+
+        DriverEntity driver = drivers.findByTelegramUserId(9001L).orElseThrow();
+        assertThat(driver.getName()).isEqualTo("João Martins");
+        assertThat(driver.getTelegramChatId()).isEqualTo(7001L);
+        assertThat(driver.getTelegramUsername()).isEqualTo("olduser");
+        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Obrigado, João Martins"));
+        assertThat(bot.last()).contains("1/10 — Qual é o cliente?");
+
+        process(3, 9001L, 7001L, "newuser", "/start");
+
+        assertThat(drivers.findAll()).hasSize(1);
+        assertThat(drivers.findByTelegramUserId(9001L).orElseThrow().getTelegramUsername()).isEqualTo("newuser");
+        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Vamos retomar"));
+    }
+
+    @Test
+    void fullQuestionFlowValidatesAnswersAndCreatesRequestOnlyAfterConfirmation() {
+        registerDriver(9101L, 7101L);
+
+        process(10, 9101L, 7101L, "driver", "Oficina Central Braga");
+        assertThat(bot.last()).contains("2/10 — Quantas jantes bipartidas");
+
+        process(11, 9101L, 7101L, "driver", "-1");
+        assertThat(bot.last()).contains("maior ou igual a zero", "2/10");
+        process(12, 9101L, 7101L, "driver", "4");
+        assertThat(bot.last()).contains("3/10 — Quantas jantes lavadas");
+        process(13, 9101L, 7101L, "driver", "texto");
+        assertThat(bot.last()).contains("maior ou igual a zero", "3/10");
+        process(14, 9101L, 7101L, "driver", "6");
+        assertThat(bot.last()).contains("4/10 — Quantas jantes normais");
+        process(15, 9101L, 7101L, "driver", "15");
+        assertThat(bot.last()).contains("5/10 — Em que data");
+
+        process(16, 9101L, 7101L, "driver", "31/02/2099");
+        assertThat(bot.last()).contains("A data é inválida");
+        process(17, 9101L, 7101L, "driver", "10/09/2099");
+        assertThat(bot.last()).contains("6/10 — Entre que horas");
+
+        process(18, 9101L, 7101L, "driver", "4");
+        assertThat(bot.last()).contains("Escolha apenas 1, 2 ou 3");
+        process(19, 9101L, 7101L, "driver", "1");
+        assertThat(bot.last()).contains("7/10 — Em que dia");
+
+        process(20, 9101L, 7101L, "driver", "09/09/2099");
+        assertThat(bot.last()).contains("não pode ser anterior");
+        process(21, 9101L, 7101L, "driver", "10/09/2099");
+        assertThat(bot.last()).contains("8/10 — Entre que horas");
+
+        process(22, 9101L, 7101L, "driver", "1");
+        assertThat(bot.last()).contains("9/10 — Alguma nota extra");
+
+        process(23, 9101L, 7101L, "driver", "Não");
+        assertThat(bot.last()).contains("10/10 — Confirma o pedido?", "Bipartidas: 4", "Lavadas: 6", "Normais: 15", "Total: 25 jantes", "Notas: Sem notas");
+        assertThat(requests.findAll()).isEmpty();
+
+        process(23, 9101L, 7101L, "driver", "Não");
+        assertThat(requests.findAll()).isEmpty();
+
+        callback(24, 9101L, 7101L, "Confirmar pedido");
+        assertThat(bot.last()).contains("Pedido confirmado");
+        assertThat(requests.findAll()).hasSize(1);
+        WheelIntakeRequestEntity request = requests.findAll().getFirst();
+        assertThat(request.getExpectedWheelQuantity()).isEqualTo(25);
+        assertThat(request.wheelQuantity(WheelType.BIPARTITE)).isEqualTo(4);
+        assertThat(request.wheelQuantity(WheelType.WASHED)).isEqualTo(6);
+        assertThat(request.wheelQuantity(WheelType.NORMAL)).isEqualTo(15);
+        assertThat(request.getSource()).isEqualTo(RequestSource.TELEGRAM);
+        assertThat(request.getFactoryDropoffSlot()).isEqualTo(FactoryTimeSlot.MORNING_09_14);
+        assertThat(request.getFactoryPickupSlot()).isEqualTo(FactoryTimeSlot.MORNING_09_14);
+        assertThat(request.getNotes()).isNull();
+
+        callback(25, 9101L, 7101L, "Confirmar pedido");
+        assertThat(requests.findAll()).hasSize(1);
+        assertThat(bot.last()).contains("já foi tratado");
+    }
+
+    @Test
+    void cancellingDraftKeepsConversationsIsolatedAndInactiveDriverCannotCreateRequest() {
+        registerDriver(9201L, 7201L);
+        registerDriver(9202L, 7202L);
+
+        process(30, 9201L, 7201L, "driver1", "Oficina Central Braga");
+        process(31, 9202L, 7202L, "driver2", "Oficina Central Braga");
+        process(32, 9201L, 7201L, "driver1", "/cancelar");
+
+        assertThat(conversations.findByTelegramUserId(9201L).orElseThrow().getState()).isEqualTo(TelegramConversationState.IDLE);
+        assertThat(conversations.findByTelegramUserId(9202L).orElseThrow().getState()).isEqualTo(TelegramConversationState.AWAITING_BIPARTITE_QUANTITY);
+
+        DriverEntity inactive = drivers.findByTelegramUserId(9201L).orElseThrow();
+        inactive.setActive(false);
+        drivers.saveAndFlush(inactive);
+
+        process(33, 9201L, 7201L, "driver1", "/novo");
+        assertThat(bot.last()).contains("desativado");
+    }
+
+    @Test
+    void zeroQuantitiesAcrossAllWheelTypesAreRejectedAndDraftReturnsToBipartiteQuestion() {
+        registerDriver(9301L, 7301L);
+
+        process(40, 9301L, 7301L, "driver", "Oficina Central Braga");
+        process(41, 9301L, 7301L, "driver", "0");
+        process(42, 9301L, 7301L, "driver", "0");
+        process(43, 9301L, 7301L, "driver", "0");
+
+        assertThat(bot.last()).contains("O pedido tem de incluir pelo menos uma jante", "2/10 — Quantas jantes bipartidas");
+        assertThat(conversations.findByTelegramUserId(9301L).orElseThrow().getState())
+                .isEqualTo(TelegramConversationState.AWAITING_BIPARTITE_QUANTITY);
+        assertThat(requests.findAll()).isEmpty();
+    }
+
+    @Test
+    void webhookRejectsMissingOrInvalidSecretAndAcceptsConfiguredSecret() throws Exception {
+        String payload = """
+                {"update_id": 400, "message": {"message_id": 1, "text": "/start",
+                "from": {"id": 9401, "username": "driver"},
+                "chat": {"id": 7401, "type": "private"}}}
+                """;
+
+        mockMvc.perform(post("/api/v1/integrations/telegram/webhook")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/v1/integrations/telegram/webhook")
+                        .header("X-Telegram-Bot-Api-Secret-Token", "wrong")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/v1/integrations/telegram/webhook")
+                        .header("X-Telegram-Bot-Api-Secret-Token", "test-telegram-secret")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk());
+    }
+
+    private void registerDriver(Long telegramUserId, Long chatId) {
+        process(1000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "/start");
+        process(2000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "Motorista " + telegramUserId);
+        bot.clear();
+    }
+
+    private void process(long updateId, Long telegramUserId, Long chatId, String username, String text) {
+        processor.process(new TelegramUpdate(updateId,
+                new TelegramMessage(updateId, new TelegramUser(telegramUserId, username, "Nome", "Apelido"),
+                        new TelegramChat(chatId, "private"), text),
+                null));
+    }
+
+    private void callback(long updateId, Long telegramUserId, Long chatId, String data) {
+        processor.process(new TelegramUpdate(updateId, null,
+                new TelegramCallbackQuery("cb-" + updateId, new TelegramUser(telegramUserId, "driver", "Nome", "Apelido"),
+                        new TelegramMessage(updateId, new TelegramUser(telegramUserId, "driver", "Nome", "Apelido"),
+                                new TelegramChat(chatId, "private"), null),
+                        data)));
+    }
+
+    private CustomerReferenceEntity customer(String externalId, String name) {
+        CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setExternalId(externalId);
+        entity.setName(name);
+        entity.setActive(true);
+        entity.setCreatedBy("TEST");
+        entity.setUpdatedBy("TEST");
+        return entity;
+    }
+
+    private DailyProductionSettingsEntity settings(LocalDate date, int capacity) {
+        DailyProductionSettingsEntity entity = new DailyProductionSettingsEntity();
+        entity.setSettingsKey("DATE:" + date);
+        entity.setSettingsDate(date);
+        entity.setDailyCapacity(capacity);
+        entity.setDailyTarget(capacity);
+        entity.setFallbackMinutesPerWheel(1);
+        entity.setCreatedBy("TEST");
+        entity.setUpdatedBy("TEST");
+        ProductionTimeWindowEntity window = new ProductionTimeWindowEntity();
+        window.setLabel("Fim do dia");
+        window.setCutoffTime(LocalTime.of(18, 30));
+        window.setSortOrder(1);
+        entity.replaceTimeWindows(List.of(window));
+        return entity;
+    }
+
+    @TestConfiguration
+    static class TelegramTestConfig {
+        @Bean
+        @Primary
+        FakeTelegramBotClient fakeTelegramBotClient() {
+            return new FakeTelegramBotClient();
+        }
+    }
+
+    static class FakeTelegramBotClient implements TelegramBotClient {
+        private final List<SentMessage> messages = new ArrayList<>();
+        private final List<String> answeredCallbacks = new ArrayList<>();
+
+        @Override
+        public void sendMessage(Long chatId, String text) {
+            messages.add(new SentMessage(chatId, text));
+        }
+
+        @Override
+        public void sendMessage(Long chatId, String text, List<List<TelegramButton>> inlineKeyboard) {
+            messages.add(new SentMessage(chatId, text));
+        }
+
+        @Override
+        public void answerCallbackQuery(String callbackQueryId) {
+            answeredCallbacks.add(callbackQueryId);
+        }
+
+        String last() {
+            return messages.getLast().text();
+        }
+
+        List<SentMessage> messages() {
+            return messages;
+        }
+
+        void clear() {
+            messages.clear();
+            answeredCallbacks.clear();
+        }
+    }
+
+    record SentMessage(Long chatId, String text) {
+    }
+}

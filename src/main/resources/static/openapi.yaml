@@ -1,0 +1,288 @@
+openapi: 3.0.3
+info:
+  title: Rucodel Production Planning API
+  version: 0.1.0
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /auth/login:
+    post:
+      security: []
+      summary: Authenticate a driver or administrator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              username: admin
+              password: admin123
+      responses:
+        "200":
+          description: Signed bearer token and current user
+  /auth/me:
+    get:
+      summary: Current authenticated user
+      responses:
+        "200":
+          description: Current user
+  /driver/requests:
+    get:
+      summary: List the authenticated driver's requests
+      responses:
+        "200":
+          description: Driver request page
+    post:
+      summary: Create a work-intake request as a driver
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              customerId: "00000000-0000-0000-0000-000000000001"
+              wheelQuantities:
+                - type: BIPARTITE
+                  quantity: 4
+                - type: WASHED
+                  quantity: 0
+                - type: NORMAL
+                  quantity: 15
+              expectedWheelQuantity: 19 # deprecated compatibility field, treated as NORMAL only when wheelQuantities is absent
+              expectedFactoryDropOffWindowStart: "2026-09-02T13:00:00+01:00"
+              expectedFactoryDropOffWindowEnd: "2026-09-02T14:00:00+01:00"
+              requestedFactoryPickupWindowStart: "2026-09-04T13:00:00+01:00"
+              requestedFactoryPickupWindowEnd: "2026-09-04T14:00:00+01:00"
+              notes: "Cliente pediu prioridade se possível"
+      responses:
+        "201":
+          description: Created request
+  /admin/requests:
+    get:
+      summary: List all requests with filters
+      responses:
+        "200":
+          description: Request page
+    post:
+      summary: Create a request on behalf of a driver
+      responses:
+        "201":
+          description: Created request
+  /admin/requests/{requestId}/arrival:
+    post:
+      summary: Confirm actual factory arrival and optionally received quantity
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Updated request
+  /admin/requests/{requestId}/received-quantity:
+    post:
+      summary: Confirm received wheel quantity
+      responses:
+        "200":
+          description: Updated request
+  /admin/requests/{requestId}/status:
+    post:
+      summary: Update production lifecycle status
+      responses:
+        "200":
+          description: Updated request
+  /admin/settings/daily:
+    get:
+      summary: Get effective daily production settings
+      parameters:
+        - in: query
+          name: date
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Daily settings
+    put:
+      summary: Configure daily capacity, target and ready-time windows
+      responses:
+        "200":
+          description: Saved daily settings
+  /admin/plans:
+    get:
+      summary: Retrieve or generate the current daily plan
+      responses:
+        "200":
+          description: Production plan
+  /admin/plans/generate:
+    post:
+      summary: Manually generate or regenerate a daily plan
+      responses:
+        "200":
+          description: Generated production plan
+  /admin/production-plans:
+    get:
+      summary: List current production plans in a date range
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Daily production plans
+  /admin/production-plans/{date}:
+    get:
+      summary: Retrieve or generate one daily production plan
+      parameters:
+        - in: path
+          name: date
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Daily production plan
+  /admin/production-plans/{date}/recalculate:
+    post:
+      summary: Recalculate current and future production plans without modifying closed historical plans
+      responses:
+        "200":
+          description: Recalculated daily production plan
+  /admin/production-plans/{date}/reconciliation:
+    get:
+      summary: Retrieve planned work and recorded reality for shift closure
+      responses:
+        "200":
+          description: Reconciliation view
+    put:
+      summary: Save shift reconciliation draft
+      responses:
+        "200":
+          description: Reconciliation draft saved
+  /admin/production-plans/{date}/close:
+    post:
+      summary: Validate real completed work and close the shift
+      responses:
+        "200":
+          description: Shift closed
+  /admin/production-plans/{date}/reopen:
+    post:
+      summary: Reopen a closed plan with an administrator reason
+      responses:
+        "200":
+          description: Plan reopened
+  /admin/planning-targets:
+    get:
+      summary: List versioned production target configurations
+      responses:
+        "200":
+          description: Planning target history
+    post:
+      summary: Create a production target configuration effective from a date
+      responses:
+        "200":
+          description: Created production target configuration
+  /admin/capacity-alerts:
+    get:
+      summary: List active or acknowledged capacity alerts
+      responses:
+        "200":
+          description: Capacity alert list
+  /admin/capacity-alerts/{id}/acknowledge:
+    patch:
+      summary: Acknowledge an active capacity alert
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Updated capacity alert
+  /admin/dashboard:
+    get:
+      summary: Administrator production dashboard
+      responses:
+        "200":
+          description: Dashboard data
+  /admin/dashboard/stream:
+    get:
+      summary: Server-sent dashboard updates with 30 second heartbeat comments
+      responses:
+        "200":
+          description: Event stream
+  /customers/search:
+    get:
+      summary: Search customers through the customer directory port
+      responses:
+        "200":
+          description: Customer search results
+  /integrations/whatsapp/requests:
+    post:
+      security: []
+      summary: Idempotent structured intake boundary for a future WhatsApp agent
+      parameters:
+        - in: header
+          name: X-Integration-Token
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              externalMessageId: unique-message-id
+              driverExternalId: driver-reference
+              customerExternalId: customer-reference-if-known
+              customerName: Customer name as written by the driver
+              wheelQuantities:
+                - type: BIPARTITE
+                  quantity: 1
+                - type: WASHED
+                  quantity: 2
+                - type: NORMAL
+                  quantity: 5
+              wheelQuantity: 8 # deprecated compatibility field, treated as NORMAL only when wheelQuantities is absent
+              expectedFactoryDropOffWindowStart: "2026-09-02T13:00:00+01:00"
+              expectedFactoryDropOffWindowEnd: "2026-09-02T14:00:00+01:00"
+              requestedFactoryPickupWindowStart: "2026-09-04T13:00:00+01:00"
+              requestedFactoryPickupWindowEnd: "2026-09-04T14:00:00+01:00"
+              notes: Optional notes
+      responses:
+        "201":
+          description: Created, duplicate, or review ingestion result
+  /integrations/telegram/webhook:
+    post:
+      security: []
+      summary: Telegram Bot API webhook for RucodelPlanBot updates
+      parameters:
+        - in: header
+          name: X-Telegram-Bot-Api-Secret-Token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Update accepted
+        "401":
+          description: Missing or invalid webhook secret
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

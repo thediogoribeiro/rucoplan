@@ -1,0 +1,64 @@
+server:
+  port: ${PORT:${SERVER_PORT:8082}}
+
+spring:
+  application:
+    name: production-planning
+  datasource:
+    url: ${PRODUCTION_PLANNING_DB_URL:jdbc:postgresql://localhost:15433/production_planning}
+    username: ${PRODUCTION_PLANNING_DB_USERNAME:production_planning}
+    password: ${PRODUCTION_PLANNING_DB_PASSWORD:production_planning}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  mvc:
+    log-request-details: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,flyway
+  endpoint:
+    health:
+      show-details: when-authorized
+
+app:
+  display-name: ${APP_DISPLAY_NAME:Rucodel Production Planning}
+  timezone: ${APP_BUSINESS_TIMEZONE:Europe/Lisbon}
+  auth:
+    token-secret: ${APP_TOKEN_SECRET:development-only-change-this-token-secret}
+    token-ttl-minutes: ${APP_TOKEN_TTL_MINUTES:720}
+  bootstrap-admin:
+    enabled: ${APP_BOOTSTRAP_ADMIN_ENABLED:false}
+    username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
+    display-name: ${APP_BOOTSTRAP_ADMIN_DISPLAY_NAME:Administrador}
+  planning:
+    daily-cron: "0 0 7 * * *"
+    recovery-hour: 7
+    fallback-minutes-per-wheel: ${APP_FALLBACK_MINUTES_PER_WHEEL:45}
+    overnight-end-time: ${PLANNING_OVERNIGHT_END_TIME:06:00}
+  integrations:
+    telegram:
+      enabled: ${TELEGRAM_ENABLED:false}
+      bot-token: ${TELEGRAM_BOT_TOKEN:}
+      bot-username: ${TELEGRAM_BOT_USERNAME:RucodelPlanBot}
+      webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
+      webhook-base-url: ${TELEGRAM_WEBHOOK_BASE_URL:}
+    whatsapp:
+      token: ${APP_WHATSAPP_INTEGRATION_TOKEN:}
+    rucofi:
+      enabled: ${RUCOFI_INTEGRATION_ENABLED:false}
+      base-url: ${RUCOFI_BASE_URL:}
+      timeout-millis: ${RUCOFI_TIMEOUT_MILLIS:3000}
+    rucopi:
+      enabled: ${RUCOPI_INTEGRATION_ENABLED:false}
+      base-url: ${RUCOPI_BASE_URL:}
+      timeout-millis: ${RUCOPI_TIMEOUT_MILLIS:3000}
+  seed:
+    enabled: ${APP_SEED_ENABLED:true}

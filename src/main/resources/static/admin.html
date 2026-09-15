@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administração · Rucodel Production Planning</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">Rucodel</div>
+    <nav class="nav" aria-label="Navegação principal">
+      <a href="#planning" class="active">Planeamento de Produção</a>
+      <a href="#closure">Fecho do turno</a>
+      <a href="#targets">Targets</a>
+      <a href="#dashboard">Plano diário</a>
+      <a href="#requests">Pedidos</a>
+      <a href="#settings">Capacidade</a>
+      <a href="#drivers">Motoristas</a>
+      <a href="#customers">Clientes</a>
+      <a href="#audit">Auditoria</a>
+    </nav>
+    <button id="logout" type="button" class="secondary full-width">Sair</button>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Administração</p>
+        <h1>Planeamento de produção</h1>
+      </div>
+      <div class="date-actions">
+        <input id="dashboard-date" type="date" aria-label="Data do plano">
+        <button id="today-button" type="button" class="secondary">Hoje</button>
+        <button id="regenerate-button" type="button">Gerar plano</button>
+        <button id="print-button" type="button" class="secondary">Imprimir</button>
+      </div>
+    </header>
+    <p id="connection-status" class="connection-status">A ligar...</p>
+    <div id="admin-app"></div>
+  </main>
+</div>
+<script src="js/api.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>

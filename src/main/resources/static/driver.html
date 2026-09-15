@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Motorista/Vendedor · Rucodel Production Planning</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="mobile-shell">
+  <header class="mobile-header">
+    <div>
+      <p class="eyebrow">Motorista/Vendedor</p>
+      <h1>Pedidos de jantes</h1>
+    </div>
+    <button id="logout" class="icon-button" type="button" title="Sair" aria-label="Sair">⇥</button>
+  </header>
+
+  <nav class="tabbar" aria-label="Área do motorista">
+    <button type="button" data-view="dashboard" class="active">Resumo</button>
+    <button type="button" data-view="new">Novo pedido</button>
+    <button type="button" data-view="list">Pedidos</button>
+  </nav>
+
+  <main id="driver-app" class="driver-main"></main>
+</div>
+<script src="js/api.js"></script>
+<script src="js/driver.js"></script>
+</body>
+</html>

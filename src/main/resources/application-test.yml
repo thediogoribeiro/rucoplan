@@ -1,0 +1,27 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:production_planning;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+
+app:
+  auth:
+    token-secret: test-secret-with-enough-length
+  integrations:
+    telegram:
+      enabled: true
+      bot-token:
+      bot-username: RucodelPlanBot
+      webhook-secret: test-telegram-secret
+      webhook-base-url: https://example.test
+    whatsapp:
+      token: test-whatsapp-token
+  seed:
+    enabled: false

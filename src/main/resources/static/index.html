@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rucodel Production Planning</title>
+  <script>
+    const session = JSON.parse(localStorage.getItem('productionPlanning.session') || 'null');
+    if (!session) location.replace('login.html');
+    else if (session.user?.role === 'ADMIN') location.replace('admin.html');
+    else location.replace('driver.html');
+  </script>
+</head>
+<body></body>
+</html>
