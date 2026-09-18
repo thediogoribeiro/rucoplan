@@ -73,6 +73,21 @@ No automatic merge is performed based on equal names, similar names or phone num
 
 Não é possível identificar a marca, o modelo ou o sistema operativo do telemóvel através da Telegram Bot API. A aplicação identifica a conta Telegram, não o dispositivo físico.
 
+## Customer Resolution
+
+After the driver is identified, the Telegram intake flow asks for the customer name. Rucoplan preserves the original text entered by the driver, but uses a normalized search value for matching. Normalization trims and collapses spaces, lowercases text, normalizes Unicode characters, compares without accents, and normalizes punctuation for search only.
+
+Customer names are not treated as unique identities. Exact normalized matches are reused only when there is exactly one active customer. If multiple customers have the same normalized name, or if only similar names are found, the bot shows numbered options and the last option is always to create a new customer.
+
+Approximate matching uses deterministic scoring based on normalized tokens, prefixes and trigram similarity. PostgreSQL deployments get a `pg_trgm` index on the normalized customer name; the application also keeps a portable in-application scorer. The default suggestion limit is 5 and the default similarity threshold is `0.30`; these can be changed with:
+
+- `app.customers.search.suggestion-limit`
+- `app.customers.search.similarity-threshold`
+
+Suggested matches are stored against the persistent conversation before they are shown. When a driver replies with `1`, `2` or presses a button, Rucoplan uses the saved option list instead of running the search again, so later database changes cannot alter the meaning of the displayed number.
+
+If no suitable customer is selected, the driver must confirm the new customer name. Rucoplan does not invent customer numbers, tax identifiers or placeholder values. When there is not enough information to create a definitive customer, a `PENDING_REVIEW` customer registration request is created and the wheel request can continue with the customer shown as pending validation. Administrators can later link that pending request to an existing customer or reject it without losing the associated wheel requests.
+
 ## Technology
 
 - Java 21.

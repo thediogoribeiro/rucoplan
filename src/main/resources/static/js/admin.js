@@ -8,6 +8,7 @@ const state = {
   settings: null,
   drivers: [],
   messagingIdentities: [],
+  customerRegistrationRequests: [],
   customers: [],
   requests: [],
   audit: [],
@@ -59,7 +60,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadAdminData() {
   const from = pp.addDays(state.date, -2);
   const to = pp.addDays(state.date, 7);
-  const [dashboard, productionPlan, productionPlans, planningTargets, settings, drivers, messagingIdentities, customers, requests, audit, capacityAlerts] = await Promise.all([
+  const [dashboard, productionPlan, productionPlans, planningTargets, settings, drivers, messagingIdentities, customerRegistrationRequests, customers, requests, audit, capacityAlerts] = await Promise.all([
     api.get(`/api/v1/admin/dashboard?date=${state.date}`),
     api.get(`/api/v1/admin/production-plans/${state.date}`),
     api.get(`/api/v1/admin/production-plans?from=${from}&to=${to}`),
@@ -67,6 +68,7 @@ async function loadAdminData() {
     api.get(`/api/v1/admin/settings/daily?date=${state.date}`),
     api.get('/api/v1/admin/drivers'),
     api.get('/api/v1/admin/messaging-identities'),
+    api.get('/api/v1/admin/customer-registration-requests'),
     api.get('/api/v1/admin/customers'),
     api.get('/api/v1/admin/requests?size=200'),
     api.get('/api/v1/admin/audit?size=50'),
@@ -79,6 +81,7 @@ async function loadAdminData() {
   state.settings = settings;
   state.drivers = drivers;
   state.messagingIdentities = messagingIdentities || [];
+  state.customerRegistrationRequests = customerRegistrationRequests || [];
   state.customers = customers;
   state.requests = requests.content || [];
   state.audit = audit.content || [];
@@ -802,6 +805,10 @@ async function linkIdentity(id) {
 function renderCustomers() {
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
+      <div class="section-header"><h2>Clientes pendentes</h2></div>
+      ${pendingCustomersTable()}
+    </section>
+    <section class="panel">
       <div class="section-header"><h2>Clientes locais</h2></div>
       <form id="customer-form" class="form-grid">
         <label>Código externo<input name="externalId"></label>
@@ -813,6 +820,56 @@ function renderCustomers() {
       </tbody></table></div>
     </section>`;
   document.querySelector('#customer-form').addEventListener('submit', createCustomer);
+  document.querySelectorAll('[data-registration-link]').forEach(button => button.addEventListener('click', () => linkCustomerRegistration(button.dataset.registrationLink)));
+  document.querySelectorAll('[data-registration-reject]').forEach(button => button.addEventListener('click', () => rejectCustomerRegistration(button.dataset.registrationReject)));
+}
+
+function pendingCustomersTable() {
+  if (!state.customerRegistrationRequests.length) return '<p class="muted">Não existem clientes pendentes de validação.</p>';
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Nome proposto</th><th>Motorista</th><th>Dados fornecidos</th><th>Estado</th><th>Pedido em</th><th>Ações</th></tr></thead>
+    <tbody>${state.customerRegistrationRequests.map(item => `<tr>
+      <td>${pp.escapeHtml(item.proposedName)}</td>
+      <td>${pp.escapeHtml(item.requestedByDriverName || '-')}</td>
+      <td>
+        Nº cliente: ${pp.escapeHtml(item.customerNumber || 'Não informado')}<br>
+        NIF/VAT: ${pp.escapeHtml(item.maskedTaxIdentifier || 'Não informado')}<br>
+        País: ${pp.escapeHtml(item.countryCode || 'Não informado')}<br>
+        Localidade: ${pp.escapeHtml(item.locality || 'Não informado')}
+      </td>
+      <td>${pp.badge(item.status)}</td>
+      <td>${pp.formatDateTime(item.createdAt)}</td>
+      <td>
+        <button type="button" class="secondary" data-registration-link="${item.id}">Associar a existente</button>
+        <button type="button" class="secondary" data-registration-reject="${item.id}">Rejeitar</button>
+      </td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+async function linkCustomerRegistration(id) {
+  const query = prompt('Nome exato do cliente existente a associar:');
+  if (!query || !query.trim()) return;
+  const customer = state.customers.find(item => item.name.toLowerCase() === query.trim().toLowerCase());
+  if (!customer) {
+    alert('Cliente não encontrado.');
+    return;
+  }
+  if (!confirm(`Associar este registo pendente a ${customer.name}?`)) return;
+  await api.postJson(`/api/v1/admin/customer-registration-requests/${id}/link`, {
+    customerId: customer.id,
+    notes: 'Associação manual no painel administrativo'
+  });
+  await loadAdminData();
+  renderCustomers();
+}
+
+async function rejectCustomerRegistration(id) {
+  const notes = prompt('Motivo da rejeição:') || '';
+  if (!confirm('Rejeitar este cliente pendente?')) return;
+  await api.postJson(`/api/v1/admin/customer-registration-requests/${id}/reject`, { notes });
+  await loadAdminData();
+  renderCustomers();
 }
 
 async function createCustomer(event) {

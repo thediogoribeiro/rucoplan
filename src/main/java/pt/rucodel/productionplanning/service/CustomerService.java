@@ -19,11 +19,14 @@ public class CustomerService {
     private final CustomerReferenceRepository customers;
     private final CustomerDirectoryPort customerDirectory;
     private final ApiMapper mapper;
+    private final CustomerNameNormalizer normalizer;
 
-    public CustomerService(CustomerReferenceRepository customers, CustomerDirectoryPort customerDirectory, ApiMapper mapper) {
+    public CustomerService(CustomerReferenceRepository customers, CustomerDirectoryPort customerDirectory, ApiMapper mapper,
+                           CustomerNameNormalizer normalizer) {
         this.customers = customers;
         this.customerDirectory = customerDirectory;
         this.mapper = mapper;
+        this.normalizer = normalizer;
     }
 
     @Transactional(readOnly = true)
@@ -67,6 +70,7 @@ public class CustomerService {
     private void apply(CustomerReferenceEntity entity, CustomerRequest request) {
         entity.setExternalId(blankToNull(request.externalId()));
         entity.setName(request.name().trim());
+        entity.setNormalizedName(normalizer.normalize(request.name()));
         entity.setActive(request.active() == null || request.active());
     }
 

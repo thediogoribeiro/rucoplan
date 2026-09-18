@@ -32,7 +32,7 @@ public class ApiMapper {
                 entity.getSource(),
                 entity.getExternalSourceReference(),
                 entity.getExternalMessageId(),
-                entity.getCustomer().getId(),
+                entity.getCustomer() == null ? null : entity.getCustomer().getId(),
                 entity.getCustomerExternalId(),
                 entity.getCustomerNameSnapshot(),
                 entity.getDriver().getId(),

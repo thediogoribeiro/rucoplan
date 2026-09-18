@@ -336,6 +336,24 @@ paths:
       responses:
         "200":
           description: Reactivated identity
+  /admin/customer-registration-requests:
+    get:
+      summary: List customer registrations pending administrative review
+      responses:
+        "200":
+          description: Pending customer registration list
+  /admin/customer-registration-requests/{id}/link:
+    post:
+      summary: Link a pending customer registration to an existing customer
+      responses:
+        "200":
+          description: Registration linked to existing customer
+  /admin/customer-registration-requests/{id}/reject:
+    post:
+      summary: Reject a pending customer registration
+      responses:
+        "200":
+          description: Registration rejected
 components:
   securitySchemes:
     bearerAuth:

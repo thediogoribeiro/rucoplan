@@ -21,6 +21,8 @@ public interface WheelIntakeRequestRepository extends JpaRepository<WheelIntakeR
 
     long countByDriverId(UUID driverId);
 
+    List<WheelIntakeRequestEntity> findByCustomerRegistrationRequestId(UUID customerRegistrationRequestId);
+
     @Query("""
             select r from WheelIntakeRequestEntity r
             where (:driverId is null or r.driver.id = :driverId)
@@ -38,7 +40,7 @@ public interface WheelIntakeRequestRepository extends JpaRepository<WheelIntakeR
     @Query("""
             select r from WheelIntakeRequestEntity r
             join fetch r.driver
-            join fetch r.customer
+            left join fetch r.customer
             where r.lifecycleStatus not in :closedStatuses
             order by r.requestedFactoryPickupWindowStart asc, r.createdAt asc
             """)

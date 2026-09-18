@@ -41,8 +41,12 @@ public class WheelIntakeRequestEntity extends BaseEntity {
     private String externalMessageId;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "customer_reference_id", nullable = false)
+    @JoinColumn(name = "customer_reference_id")
     private CustomerReferenceEntity customer;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_registration_request_id")
+    private CustomerRegistrationRequestEntity customerRegistrationRequest;
 
     @Column(name = "customer_external_id", length = 120)
     private String customerExternalId;
@@ -174,6 +178,14 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     public void setCustomer(CustomerReferenceEntity customer) {
         this.customer = customer;
+    }
+
+    public CustomerRegistrationRequestEntity getCustomerRegistrationRequest() {
+        return customerRegistrationRequest;
+    }
+
+    public void setCustomerRegistrationRequest(CustomerRegistrationRequestEntity customerRegistrationRequest) {
+        this.customerRegistrationRequest = customerRegistrationRequest;
     }
 
     public String getCustomerExternalId() {

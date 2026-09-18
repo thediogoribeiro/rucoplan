@@ -4,9 +4,13 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
+import java.text.Normalizer;
+import java.util.Locale;
 import java.util.UUID;
 
 @Entity
@@ -14,7 +18,8 @@ import java.util.UUID;
         name = "customer_reference",
         indexes = {
                 @Index(name = "idx_customer_reference_external_id", columnList = "external_id"),
-                @Index(name = "idx_customer_reference_name", columnList = "name")
+                @Index(name = "idx_customer_reference_name", columnList = "name"),
+                @Index(name = "idx_customer_reference_normalized_name", columnList = "normalized_name")
         }
 )
 public class CustomerReferenceEntity extends BaseEntity {
@@ -28,6 +33,9 @@ public class CustomerReferenceEntity extends BaseEntity {
     @Column(name = "name", nullable = false)
     private String name;
 
+    @Column(name = "normalized_name", nullable = false, length = 255)
+    private String normalizedName;
+
     @Column(name = "active", nullable = false)
     private boolean active = true;
 
@@ -40,6 +48,27 @@ public class CustomerReferenceEntity extends BaseEntity {
         if (id == null) {
             id = newId();
         }
+    }
+
+    @PrePersist
+    @PreUpdate
+    void normalizeNameBeforeSave() {
+        if ((normalizedName == null || normalizedName.isBlank()) && name != null) {
+            normalizedName = normalizeForSearch(name);
+        }
+    }
+
+    private String normalizeForSearch(String value) {
+        String normalized = Normalizer.normalize(value.trim(), Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}", "")
+                .replace('’', '\'')
+                .replaceAll("[\\p{Punct}&&[^'-]]+", " ")
+                .replace('-', ' ')
+                .replace('\'', ' ')
+                .replaceAll("\\s+", " ")
+                .toLowerCase(Locale.ROOT)
+                .trim();
+        return normalized;
     }
 
     public UUID getId() {
@@ -64,6 +93,14 @@ public class CustomerReferenceEntity extends BaseEntity {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public String getNormalizedName() {
+        return normalizedName;
+    }
+
+    public void setNormalizedName(String normalizedName) {
+        this.normalizedName = normalizedName;
     }
 
     public boolean isActive() {

@@ -581,7 +581,7 @@ public class MultiDayProductionPlanningService {
         return new DailyProductionPlanLineResponse(
                 line.getId(),
                 request.getId(),
-                request.getCustomer().getId(),
+                request.getCustomer() == null ? null : request.getCustomer().getId(),
                 line.getCustomerName(),
                 line.getDriverName(),
                 request.getSource(),

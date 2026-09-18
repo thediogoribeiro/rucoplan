@@ -36,6 +36,8 @@ class TelegramFlowIntegrationTest {
     @jakarta.annotation.Resource WheelIntakeRequestRepository requests;
     @jakarta.annotation.Resource TelegramConversationRepository conversations;
     @jakarta.annotation.Resource TelegramIntakeDraftRepository drafts;
+    @jakarta.annotation.Resource ConversationCustomerCandidateRepository customerCandidates;
+    @jakarta.annotation.Resource CustomerRegistrationRequestRepository customerRegistrationRequests;
     @jakarta.annotation.Resource TelegramInboundUpdateRepository inboundUpdates;
     @jakarta.annotation.Resource MessagingIdentityRepository messagingIdentities;
     @jakarta.annotation.Resource MessagingIdentityEventRepository messagingIdentityEvents;
@@ -52,17 +54,24 @@ class TelegramFlowIntegrationTest {
     @BeforeEach
     void setUp() {
         bot.clear();
+        customerCandidates.deleteAll();
         inboundUpdates.deleteAll();
         messagingIdentityEvents.deleteAll();
-        conversations.deleteAll();
-        drafts.deleteAll();
         capacityAlerts.deleteAll();
         planItems.deleteAll();
         plans.deleteAll();
         history.deleteAll();
         audit.deleteAll();
         whatsapp.deleteAll();
+        conversations.findAll().forEach(conversation -> {
+            conversation.setActiveDraft(null);
+            conversations.save(conversation);
+        });
+        conversations.flush();
+        drafts.deleteAll();
         requests.deleteAll();
+        customerRegistrationRequests.deleteAll();
+        conversations.deleteAll();
         messagingIdentities.deleteAll();
         settings.deleteAll();
         customers.deleteAll();
@@ -169,6 +178,71 @@ class TelegramFlowIntegrationTest {
         callback(25, 9101L, 7101L, "Confirmar pedido");
         assertThat(requests.findAll()).hasSize(1);
         assertThat(bot.last()).contains("já foi tratado");
+    }
+
+    @Test
+    void customerExactMatchUsesNormalizedNameAndContinuesToWheelTypes() {
+        registerDriver(9151L, 7151L);
+
+        process(110, 9151L, 7151L, "driver", " OFICINA   CENTRAL BRAGA ");
+
+        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Cliente identificado: Oficina Central Braga"));
+        assertThat(bot.last()).contains("2/10 — Quantas jantes bipartidas");
+        TelegramIntakeDraftEntity draft = drafts.findFirstByDriverIdAndStatusOrderByCreatedAtDesc(
+                drivers.findByTelegramUserId(9151L).orElseThrow().getId(), TelegramDraftStatus.ACTIVE).orElseThrow();
+        assertThat(draft.getCustomer().getId()).isEqualTo(customer.getId());
+        assertThat(draft.getCustomerRegistrationRequest()).isNull();
+    }
+
+    @Test
+    void customerTypoShowsPersistedCandidatesAndSelectionUsesDisplayedPosition() {
+        CustomerReferenceEntity first = customers.save(customer("C2001", "Loja de Reparação de Jantes de Ermesinde"));
+        customers.save(customer("C2002", "Reparação de Jantes Ermesinde"));
+        customers.save(customer("C2003", "Jantes de Ermesinde"));
+        registerDriver(9152L, 7152L);
+
+        process(120, 9152L, 7152L, "driver", "Loja de reparação de jantes de Irmezinde");
+
+        assertThat(bot.last()).contains("Não encontrei um cliente com esse nome exato", "Criar novo cliente");
+        TelegramConversationEntity conversation = conversations.findByTelegramUserId(9152L).orElseThrow();
+        List<ConversationCustomerCandidateEntity> options = customerCandidates.findByConversationIdOrderByPositionAsc(conversation.getId());
+        assertThat(options).isNotEmpty();
+        assertThat(options.getLast().getOptionType()).isEqualTo(ConversationCustomerOptionType.CREATE_NEW_CUSTOMER);
+        assertThat(options.getFirst().getCustomer().getId()).isEqualTo(first.getId());
+
+        callback(121, 9152L, 7152L, "CUSTOMER_OPTION:1");
+
+        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Cliente selecionado: Loja de Reparação de Jantes de Ermesinde"));
+        assertThat(bot.last()).contains("2/10 — Quantas jantes bipartidas");
+        TelegramIntakeDraftEntity draft = drafts.findFirstByDriverIdAndStatusOrderByCreatedAtDesc(
+                drivers.findByTelegramUserId(9152L).orElseThrow().getId(), TelegramDraftStatus.ACTIVE).orElseThrow();
+        assertThat(draft.getCustomer().getId()).isEqualTo(first.getId());
+    }
+
+    @Test
+    void unknownCustomerRequiresConfirmationAndCreatesPendingRegistrationWithoutFakeData() {
+        registerDriver(9153L, 7153L);
+
+        process(130, 9153L, 7153L, "driver", "Cliente Lunar Desconhecido");
+        assertThat(bot.last()).contains("Não encontrei nenhum cliente semelhante", "1 — Criar novo cliente", "2 — Corrigir");
+
+        process(131, 9153L, 7153L, "driver", "1");
+        assertThat(bot.last()).contains("Pretende criar um novo cliente com o nome", "Cliente Lunar Desconhecido");
+
+        callback(132, 9153L, 7153L, "CUSTOMER_NEW_CONFIRM");
+        assertThat(bot.last()).contains("Confirme os dados do novo cliente", "NIF/VAT: Não informado", "pendente de validação administrativa");
+
+        process(133, 9153L, 7153L, "driver", "1");
+        assertThat(bot.last()).contains("2/10 — Quantas jantes bipartidas");
+        assertThat(customerRegistrationRequests.findAll()).hasSize(1);
+        CustomerRegistrationRequestEntity registration = customerRegistrationRequests.findAll().getFirst();
+        assertThat(registration.getStatus()).isEqualTo(CustomerRegistrationStatus.PENDING_REVIEW);
+        assertThat(registration.getProposedName()).isEqualTo("Cliente Lunar Desconhecido");
+        assertThat(registration.getTaxIdentifier()).isNull();
+        TelegramIntakeDraftEntity draft = drafts.findFirstByDriverIdAndStatusOrderByCreatedAtDesc(
+                drivers.findByTelegramUserId(9153L).orElseThrow().getId(), TelegramDraftStatus.ACTIVE).orElseThrow();
+        assertThat(draft.getCustomer()).isNull();
+        assertThat(draft.getCustomerRegistrationRequest().getId()).isEqualTo(registration.getId());
     }
 
     @Test

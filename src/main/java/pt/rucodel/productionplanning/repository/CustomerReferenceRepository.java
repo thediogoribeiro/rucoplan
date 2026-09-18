@@ -14,6 +14,8 @@ public interface CustomerReferenceRepository extends JpaRepository<CustomerRefer
 
     List<CustomerReferenceEntity> findByNameIgnoreCase(String name);
 
+    List<CustomerReferenceEntity> findByActiveTrueAndNormalizedNameOrderByNameAscIdAsc(String normalizedName);
+
     @Query("""
             select c from CustomerReferenceEntity c
             where c.active = true

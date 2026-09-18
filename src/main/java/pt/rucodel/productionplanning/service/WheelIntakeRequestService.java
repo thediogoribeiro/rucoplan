@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.*;
 import pt.rucodel.productionplanning.dto.*;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
+import pt.rucodel.productionplanning.entity.CustomerRegistrationRequestEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
 import pt.rucodel.productionplanning.entity.MessagingIdentityEntity;
 import pt.rucodel.productionplanning.entity.RequestStatusHistoryEntity;
@@ -159,7 +160,21 @@ public class WheelIntakeRequestService {
                                                        OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
                                                        FactoryTimeSlot pickupSlot,
                                                        String notes) {
-        return createFromTelegramInternal(externalMessageId, driver, submittedByIdentity, customer, quantities,
+        return createFromTelegramInternal(externalMessageId, driver, submittedByIdentity, customer, null, quantities,
+                dropOffStart, dropOffEnd, dropoffSlot, pickupStart, pickupEnd, pickupSlot, notes);
+    }
+
+    @Transactional
+    public WheelIntakeRequestEntity createFromTelegramWithPendingCustomer(String externalMessageId, DriverEntity driver,
+                                                                          MessagingIdentityEntity submittedByIdentity,
+                                                                          CustomerRegistrationRequestEntity pendingCustomer,
+                                                                          Map<WheelType, Integer> quantities,
+                                                                          OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
+                                                                          FactoryTimeSlot dropoffSlot,
+                                                                          OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
+                                                                          FactoryTimeSlot pickupSlot,
+                                                                          String notes) {
+        return createFromTelegramInternal(externalMessageId, driver, submittedByIdentity, null, pendingCustomer, quantities,
                 dropOffStart, dropOffEnd, dropoffSlot, pickupStart, pickupEnd, pickupSlot, notes);
     }
 
@@ -171,13 +186,15 @@ public class WheelIntakeRequestService {
                                                        OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
                                                        FactoryTimeSlot pickupSlot,
                                                        String notes) {
-        return createFromTelegramInternal(externalMessageId, driver, null, customer, quantities,
+        return createFromTelegramInternal(externalMessageId, driver, null, customer, null, quantities,
                 dropOffStart, dropOffEnd, dropoffSlot, pickupStart, pickupEnd, pickupSlot, notes);
     }
 
     private WheelIntakeRequestEntity createFromTelegramInternal(String externalMessageId, DriverEntity driver,
                                                                MessagingIdentityEntity submittedByIdentity,
-                                                               CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                               CustomerReferenceEntity customer,
+                                                               CustomerRegistrationRequestEntity pendingCustomer,
+                                                               Map<WheelType, Integer> quantities,
                                                                OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
                                                                FactoryTimeSlot dropoffSlot,
                                                                OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
@@ -196,6 +213,8 @@ public class WheelIntakeRequestService {
                 idempotencyKey,
                 driver,
                 customer,
+                pendingCustomer,
+                customer == null && pendingCustomer != null ? pendingCustomer.getProposedName() + " (Pendente de validação)" : null,
                 quantities,
                 dropOffStart,
                 dropOffEnd,
@@ -380,15 +399,30 @@ public class WheelIntakeRequestService {
                                                  OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
                                                  OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
                                                  String notes, String actor) {
+        return createEntity(source, externalSourceReference, externalMessageId, driver, customer, null, null, quantities,
+                dropOffStart, dropOffEnd, pickupStart, pickupEnd, notes, actor);
+    }
+
+    private WheelIntakeRequestEntity createEntity(RequestSource source, String externalSourceReference, String externalMessageId,
+                                                 DriverEntity driver, CustomerReferenceEntity customer,
+                                                 CustomerRegistrationRequestEntity pendingCustomer, String customerNameSnapshot,
+                                                 Map<WheelType, Integer> quantities,
+                                                 OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
+                                                 OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
+                                                 String notes, String actor) {
         int expectedQuantity = wheelQuantityService.total(quantities);
         validateRequestFields(expectedQuantity, dropOffStart, dropOffEnd, pickupStart, pickupEnd);
+        if (customer == null && pendingCustomer == null) {
+            throw new InvalidRequestException("Customer is required.");
+        }
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
         entity.setSource(source);
         entity.setExternalSourceReference(externalSourceReference);
         entity.setExternalMessageId(blankToNull(externalMessageId));
         entity.setCustomer(customer);
-        entity.setCustomerExternalId(customer.getExternalId());
-        entity.setCustomerNameSnapshot(customer.getName());
+        entity.setCustomerRegistrationRequest(pendingCustomer);
+        entity.setCustomerExternalId(customer == null ? null : customer.getExternalId());
+        entity.setCustomerNameSnapshot(customer == null ? customerNameSnapshot : customer.getName());
         entity.setDriver(driver);
         entity.replaceWheelQuantities(quantities);
         entity.setExpectedFactoryDropOffWindowStart(dropOffStart);
@@ -407,6 +441,7 @@ public class WheelIntakeRequestService {
         if (update.customerId() != null) {
             CustomerReferenceEntity customer = requireCustomer(update.customerId());
             entity.setCustomer(customer);
+            entity.setCustomerRegistrationRequest(null);
             entity.setCustomerExternalId(customer.getExternalId());
             entity.setCustomerNameSnapshot(customer.getName());
         }

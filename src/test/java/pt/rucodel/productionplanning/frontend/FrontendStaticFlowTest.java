@@ -37,7 +37,9 @@ class FrontendStaticFlowTest {
         assertThat(adminHtml).contains("Planeamento de Produção", "Fecho do turno", "Targets", "Plano diário", "Capacidade");
         assertThat(admin).contains("/api/v1/admin/settings/daily");
         assertThat(admin).contains("/api/v1/admin/messaging-identities");
+        assertThat(admin).contains("/api/v1/admin/customer-registration-requests");
         assertThat(admin).contains("Identidades Telegram e canais de comunicação");
+        assertThat(admin).contains("Clientes pendentes");
         assertThat(admin).contains("Bloquear", "Reativar", "Associar");
         assertThat(admin).contains("/api/v1/admin/production-plans");
         assertThat(admin).contains("/api/v1/admin/planning-targets");

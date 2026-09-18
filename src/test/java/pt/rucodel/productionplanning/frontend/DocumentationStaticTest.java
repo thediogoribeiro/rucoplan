@@ -19,6 +19,7 @@ class DocumentationStaticTest {
         assertThat(openApi).contains("/admin/planning-targets");
         assertThat(openApi).contains("/admin/settings/daily");
         assertThat(openApi).contains("/admin/messaging-identities");
+        assertThat(openApi).contains("/admin/customer-registration-requests");
         assertThat(openApi).contains("/driver/requests");
         assertThat(openApi).contains("wheelQuantities");
         assertThat(openApi).contains("BIPARTITE", "WASHED", "NORMAL");
@@ -35,6 +36,9 @@ class DocumentationStaticTest {
         assertThat(readme).contains("Telegram account");
         assertThat(readme).contains("not the physical device");
         assertThat(readme).contains("Telegram Bot API");
+        assertThat(readme).contains("Customer Resolution");
+        assertThat(readme).contains("pg_trgm");
+        assertThat(readme).contains("PENDING_REVIEW");
         assertThat(readme).contains("mvn test");
     }
 }
