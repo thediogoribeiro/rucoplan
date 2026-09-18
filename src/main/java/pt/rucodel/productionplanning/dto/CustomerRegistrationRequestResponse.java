@@ -8,7 +8,7 @@ import java.util.UUID;
 public record CustomerRegistrationRequestResponse(
         UUID id,
         String proposedName,
-        String customerNumber,
+        Integer reservedCustomerNumber,
         String maskedTaxIdentifier,
         String countryCode,
         String locality,

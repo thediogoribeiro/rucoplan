@@ -54,7 +54,7 @@ public class AdminCustomerRegistrationController {
         return new CustomerRegistrationRequestResponse(
                 entity.getId(),
                 entity.getProposedName(),
-                entity.getCustomerNumber(),
+                entity.getReservedCustomerNumber(),
                 mask(entity.getTaxIdentifier()),
                 entity.getCountryCode(),
                 entity.getLocality(),

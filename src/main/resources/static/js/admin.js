@@ -813,10 +813,25 @@ function renderCustomers() {
       <form id="customer-form" class="form-grid">
         <label>Código externo<input name="externalId"></label>
         <label>Nome<input name="name" required></label>
+        <label>NIF/VAT<input name="taxIdentifier"></label>
+        <label>País ISO<input name="countryCode" maxlength="2"></label>
+        <label>Localidade<input name="locality"></label>
+        <label>Sistema externo<input name="externalSystem"></label>
+        <label>ID externo<input name="externalCustomerId"></label>
         <button type="submit">Criar cliente</button>
       </form>
-      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Nome</th><th>Código</th><th>Estado</th></tr></thead><tbody>
-        ${state.customers.map(customer => `<tr><td>${pp.escapeHtml(customer.name)}</td><td>${pp.escapeHtml(customer.externalId || '-')}</td><td>${customer.active ? 'Ativo' : 'Inativo'}</td></tr>`).join('')}
+      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>ID técnico</th><th>Nº RucoPlan</th><th>Nome</th><th>NIF/VAT</th><th>País</th><th>Localidade</th><th>Sistema externo</th><th>ID externo</th><th>Estado</th></tr></thead><tbody>
+        ${state.customers.map(customer => `<tr>
+          <td>${pp.escapeHtml(customer.id)}</td>
+          <td>${customer.customerNumber || '-'}</td>
+          <td>${pp.escapeHtml(customer.name)}</td>
+          <td>${pp.escapeHtml(customer.taxIdentifier || '-')}</td>
+          <td>${pp.escapeHtml(customer.countryCode || '-')}</td>
+          <td>${pp.escapeHtml(customer.locality || '-')}</td>
+          <td>${pp.escapeHtml(customer.externalSystem || '-')}</td>
+          <td>${pp.escapeHtml(customer.externalCustomerId || customer.externalId || '-')}</td>
+          <td>${customer.active ? 'Ativo' : 'Inativo'}</td>
+        </tr>`).join('')}
       </tbody></table></div>
     </section>`;
   document.querySelector('#customer-form').addEventListener('submit', createCustomer);
@@ -832,7 +847,7 @@ function pendingCustomersTable() {
       <td>${pp.escapeHtml(item.proposedName)}</td>
       <td>${pp.escapeHtml(item.requestedByDriverName || '-')}</td>
       <td>
-        Nº cliente: ${pp.escapeHtml(item.customerNumber || 'Não informado')}<br>
+        Nº RucoPlan: ${pp.escapeHtml(item.reservedCustomerNumber || 'Não informado')}<br>
         NIF/VAT: ${pp.escapeHtml(item.maskedTaxIdentifier || 'Não informado')}<br>
         País: ${pp.escapeHtml(item.countryCode || 'Não informado')}<br>
         Localidade: ${pp.escapeHtml(item.locality || 'Não informado')}
@@ -878,6 +893,11 @@ async function createCustomer(event) {
   await api.postJson('/api/v1/admin/customers', {
     externalId: form.externalId.value.trim(),
     name: form.name.value.trim(),
+    taxIdentifier: form.taxIdentifier.value.trim(),
+    countryCode: form.countryCode.value.trim(),
+    locality: form.locality.value.trim(),
+    externalSystem: form.externalSystem.value.trim(),
+    externalCustomerId: form.externalCustomerId.value.trim(),
     active: true
   });
   await loadAdminData();

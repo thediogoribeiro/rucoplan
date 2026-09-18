@@ -120,6 +120,9 @@ public class DevSeedDataConfig {
     private CustomerReferenceEntity customer(String externalId, String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
         entity.setExternalId(externalId);
+        if (externalId != null && externalId.matches("C[0-9]+")) {
+            entity.setCustomerNumber(Integer.parseInt(externalId.substring(1)));
+        }
         entity.setName(name);
         entity.setActive(true);
         entity.setCreatedBy("DEV_SEED");

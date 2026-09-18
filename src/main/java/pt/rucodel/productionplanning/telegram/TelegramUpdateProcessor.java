@@ -333,9 +333,13 @@ public class TelegramUpdateProcessor {
             case IDLE -> startDraft(conversation, driver, chatId);
             case AWAITING_CUSTOMER, AWAITING_CUSTOMER_NAME -> handleCustomerName(conversation, chatId, text);
             case AWAITING_CUSTOMER_SELECTION -> handleCustomerSelection(conversation, chatId, text);
-            case AWAITING_NEW_CUSTOMER_CONFIRMATION -> handleNewCustomerConfirmation(conversation, chatId, text);
-            case AWAITING_NEW_CUSTOMER_DETAILS -> handleNewCustomerFinalConfirmation(conversation, chatId, text);
+            case AWAITING_NEW_CUSTOMER_CONFIRMATION, AWAITING_NEW_CUSTOMER_NAME_CONFIRMATION -> handleNewCustomerNameConfirmation(conversation, chatId, text);
+            case AWAITING_NEW_CUSTOMER_TAX_IDENTIFIER -> handleNewCustomerTaxIdentifier(conversation, chatId, text);
+            case AWAITING_NEW_CUSTOMER_COUNTRY -> handleNewCustomerCountry(conversation, chatId, text);
+            case AWAITING_NEW_CUSTOMER_LOCALITY -> handleNewCustomerLocality(conversation, chatId, text);
+            case AWAITING_NEW_CUSTOMER_DETAILS -> handleNewCustomerFieldToCorrect(conversation, chatId, text);
             case AWAITING_NEW_CUSTOMER_FINAL_CONFIRMATION -> handleNewCustomerFinalConfirmation(conversation, chatId, text);
+            case AWAITING_NEW_CUSTOMER_FIELD_TO_CORRECT -> handleNewCustomerFieldToCorrect(conversation, chatId, text);
             case AWAITING_BIPARTITE_QUANTITY -> handleQuantity(conversation, chatId, text, WheelType.BIPARTITE, TelegramConversationState.AWAITING_WASHED_QUANTITY);
             case AWAITING_WASHED_QUANTITY -> handleQuantity(conversation, chatId, text, WheelType.WASHED, TelegramConversationState.AWAITING_NORMAL_QUANTITY);
             case AWAITING_NORMAL_QUANTITY -> handleNormalQuantity(conversation, chatId, text);
@@ -420,12 +424,16 @@ public class TelegramUpdateProcessor {
             return;
         }
         if (option.getOptionType() == ConversationCustomerOptionType.CREATE_NEW_CUSTOMER) {
-            conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_CONFIRMATION);
+            conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_NAME_CONFIRMATION);
             conversations.save(conversation);
             botClient.sendMessage(chatId, """
                     Pretende criar um novo cliente com o nome:
 
-                    %s?""".formatted(option.getOriginalSearchText()),
+                    %s?
+
+                    1 — Confirmar nome
+                    2 — Corrigir nome
+                    3 — Cancelar""".formatted(option.getOriginalSearchText()),
                     List.of(List.of(
                             new TelegramButton("Confirmar nome", "CUSTOMER_NEW_CONFIRM"),
                             new TelegramButton("Corrigir nome", "CUSTOMER_NEW_CORRECT"),
@@ -439,39 +447,9 @@ public class TelegramUpdateProcessor {
         botClient.sendMessage(chatId, conversationFlow.customerQuestion());
     }
 
-    private void handleNewCustomerConfirmation(TelegramConversationEntity conversation, Long chatId, String text) {
+    private void handleNewCustomerNameConfirmation(TelegramConversationEntity conversation, Long chatId, String text) {
         String normalized = normalizeCommandText(text);
-        if (normalized.equals("customer_new_confirm") || normalized.equals("confirmar nome") || normalized.equals("confirmar") || normalized.equals("sim")) {
-            conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_FINAL_CONFIRMATION);
-            conversations.save(conversation);
-            botClient.sendMessage(chatId, newCustomerFinalMessage(conversation),
-                    List.of(List.of(
-                            new TelegramButton("Confirmar", "CUSTOMER_FINAL_CONFIRM"),
-                            new TelegramButton("Corrigir", "CUSTOMER_NEW_CORRECT"),
-                            new TelegramButton("Cancelar", "CUSTOMER_NEW_CANCEL")
-                    )));
-            return;
-        }
-        if (normalized.equals("customer_new_correct") || normalized.equals("corrigir nome") || normalized.equals("corrigir")) {
-            customerResolution.clearCandidates(conversation);
-            conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
-            conversations.save(conversation);
-            botClient.sendMessage(chatId, conversationFlow.customerQuestion());
-            return;
-        }
-        if (normalized.equals("customer_new_cancel") || normalized.equals("cancelar")) {
-            customerResolution.clearCandidates(conversation);
-            conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
-            conversations.save(conversation);
-            botClient.sendMessage(chatId, "Criação de cliente cancelada.\n\n" + conversationFlow.customerQuestion());
-            return;
-        }
-        botClient.sendMessage(chatId, "Responda com Confirmar nome, Corrigir nome ou Cancelar.");
-    }
-
-    private void handleNewCustomerFinalConfirmation(TelegramConversationEntity conversation, Long chatId, String text) {
-        String normalized = normalizeCommandText(text);
-        if (normalized.equals("customer_final_confirm") || normalized.equals("confirmar") || normalized.equals("1") || normalized.equals("sim")) {
+        if (normalized.equals("customer_new_confirm") || normalized.equals("confirmar nome") || normalized.equals("confirmar") || normalized.equals("sim") || normalized.equals("1")) {
             ConversationCustomerCandidateEntity createOption = customerResolution.currentOptions(conversation).stream()
                     .filter(option -> option.getOptionType() == ConversationCustomerOptionType.CREATE_NEW_CUSTOMER)
                     .findFirst()
@@ -483,24 +461,14 @@ public class TelegramUpdateProcessor {
                 return;
             }
             TelegramIntakeDraftEntity draft = requireDraft(conversation);
-            CustomerRegistrationRequestEntity registration = customerRegistrationRequests.createPending(
-                    createOption.getOriginalSearchText(),
-                    draft.getDriver(),
-                    conversation.getMessagingIdentity(),
-                    conversation
-            );
-            draft.setCustomer(null);
-            draft.setCustomerRegistrationRequest(registration);
-            draft.setCustomerNameSnapshot(registration.getProposedName() + " (Pendente de validação)");
-            draft.setCustomerCandidateIds(null);
-            customerResolution.clearCandidates(conversation);
-            drafts.save(draft);
-            botClient.sendMessage(chatId, "Cliente registado como pendente de validação administrativa. O pedido pode continuar normalmente.");
-            saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_BIPARTITE_QUANTITY,
-                    conversationFlow.quantityQuestion(WheelType.BIPARTITE));
+            customerRegistrationRequests.startDraft(createOption.getOriginalSearchText(), draft.getDriver(),
+                    conversation.getMessagingIdentity(), conversation);
+            conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_TAX_IDENTIFIER);
+            conversations.save(conversation);
+            botClient.sendMessage(chatId, "Qual é o NIF ou VAT number do novo cliente?");
             return;
         }
-        if (normalized.equals("customer_new_correct") || normalized.equals("corrigir") || normalized.equals("2")) {
+        if (normalized.equals("customer_new_correct") || normalized.equals("corrigir nome") || normalized.equals("corrigir") || normalized.equals("2")) {
             customerResolution.clearCandidates(conversation);
             conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
             conversations.save(conversation);
@@ -511,10 +479,130 @@ public class TelegramUpdateProcessor {
             customerResolution.clearCandidates(conversation);
             conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
             conversations.save(conversation);
-            botClient.sendMessage(chatId, "Criação de cliente cancelada.\n\n" + conversationFlow.customerQuestion());
+            botClient.sendMessage(chatId, "A criação do cliente foi cancelada. Indique novamente o cliente.");
             return;
         }
         botClient.sendMessage(chatId, "Responda com 1 para confirmar, 2 para corrigir ou 3 para cancelar.");
+    }
+
+    private void handleNewCustomerTaxIdentifier(TelegramConversationEntity conversation, Long chatId, String text) {
+        CustomerRegistrationRequestEntity registration = currentCustomerRegistration(conversation);
+        try {
+            customerRegistrationRequests.saveTaxIdentifier(registration, text);
+        } catch (pt.rucodel.productionplanning.exception.InvalidRequestException ex) {
+            botClient.sendMessage(chatId, ex.getMessage() + "\n\nQual é o NIF ou VAT number do novo cliente?");
+            return;
+        }
+        conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_COUNTRY);
+        conversations.save(conversation);
+        botClient.sendMessage(chatId, countryQuestion(), countryKeyboard());
+    }
+
+    private void handleNewCustomerCountry(TelegramConversationEntity conversation, Long chatId, String text) {
+        CustomerRegistrationRequestEntity registration = currentCustomerRegistration(conversation);
+        String countryInput = countryFromOption(text);
+        if ("OTHER".equals(countryInput)) {
+            botClient.sendMessage(chatId, "Indique o código ISO de duas letras do país, por exemplo PT, ES, FR ou LU.");
+            return;
+        }
+        try {
+            customerRegistrationRequests.saveCountry(registration, countryInput);
+        } catch (pt.rucodel.productionplanning.exception.InvalidRequestException ex) {
+            botClient.sendMessage(chatId, ex.getMessage() + "\n\n" + countryQuestion(), countryKeyboard());
+            return;
+        }
+        conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_LOCALITY);
+        conversations.save(conversation);
+        botClient.sendMessage(chatId, "Qual é a localidade do novo cliente?");
+    }
+
+    private void handleNewCustomerLocality(TelegramConversationEntity conversation, Long chatId, String text) {
+        CustomerRegistrationRequestEntity registration = currentCustomerRegistration(conversation);
+        try {
+            customerRegistrationRequests.saveLocalityAndReserveNumber(registration, text);
+        } catch (pt.rucodel.productionplanning.exception.InvalidRequestException ex) {
+            botClient.sendMessage(chatId, ex.getMessage() + "\n\nQual é a localidade do novo cliente?");
+            return;
+        }
+        conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_FINAL_CONFIRMATION);
+        conversations.save(conversation);
+        botClient.sendMessage(chatId, newCustomerFinalMessage(conversation), newCustomerFinalKeyboard());
+    }
+
+    private void handleNewCustomerFinalConfirmation(TelegramConversationEntity conversation, Long chatId, String text) {
+        String normalized = normalizeCommandText(text);
+        if (normalized.equals("customer_final_confirm") || normalized.equals("confirmar e criar cliente") || normalized.equals("confirmar") || normalized.equals("1") || normalized.equals("sim")) {
+            TelegramIntakeDraftEntity draft = requireDraft(conversation);
+            CustomerRegistrationRequestEntity registration = currentCustomerRegistration(conversation);
+            CustomerReferenceEntity customer;
+            try {
+                customer = customerRegistrationRequests.confirmAndCreateCustomer(registration);
+            } catch (pt.rucodel.productionplanning.exception.InvalidRequestException ex) {
+                botClient.sendMessage(chatId, ex.getMessage() + "\n\n" + newCustomerFinalMessage(conversation), newCustomerFinalKeyboard());
+                return;
+            }
+            draft.setCustomer(customer);
+            draft.setCustomerRegistrationRequest(null);
+            draft.setCustomerNameSnapshot(customer.getName());
+            draft.setCustomerCandidateIds(null);
+            customerResolution.clearCandidates(conversation);
+            drafts.save(draft);
+            botClient.sendMessage(chatId, """
+                    Cliente criado com sucesso.
+
+                    Cliente: %s
+                    Número de cliente RucoPlan: %d""".formatted(customer.getName(), customer.getCustomerNumber()));
+            saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_BIPARTITE_QUANTITY,
+                    conversationFlow.quantityQuestion(WheelType.BIPARTITE));
+            return;
+        }
+        if (normalized.equals("customer_new_correct") || normalized.equals("corrigir dados") || normalized.equals("corrigir") || normalized.equals("2")) {
+            conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_FIELD_TO_CORRECT);
+            conversations.save(conversation);
+            botClient.sendMessage(chatId, newCustomerCorrectionQuestion());
+            return;
+        }
+        if (normalized.equals("customer_new_cancel") || normalized.equals("cancelar") || normalized.equals("3")) {
+            customerRegistrationRequests.cancel(currentCustomerRegistration(conversation));
+            customerResolution.clearCandidates(conversation);
+            conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
+            conversations.save(conversation);
+            botClient.sendMessage(chatId, "A criação do cliente foi cancelada. Indique novamente o cliente.");
+            return;
+        }
+        botClient.sendMessage(chatId, "Responda com 1 para confirmar, 2 para corrigir ou 3 para cancelar.");
+    }
+
+    private void handleNewCustomerFieldToCorrect(TelegramConversationEntity conversation, Long chatId, String text) {
+        switch (normalizeCommandText(text)) {
+            case "1", "nome" -> {
+                customerResolution.clearCandidates(conversation);
+                conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
+                conversations.save(conversation);
+                botClient.sendMessage(chatId, conversationFlow.customerQuestion());
+            }
+            case "2", "nif", "vat", "nif/vat" -> {
+                conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_TAX_IDENTIFIER);
+                conversations.save(conversation);
+                botClient.sendMessage(chatId, "Qual é o NIF ou VAT number do novo cliente?");
+            }
+            case "3", "pais", "país" -> {
+                conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_COUNTRY);
+                conversations.save(conversation);
+                botClient.sendMessage(chatId, countryQuestion());
+            }
+            case "4", "localidade" -> {
+                conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_LOCALITY);
+                conversations.save(conversation);
+                botClient.sendMessage(chatId, "Qual é a localidade do novo cliente?");
+            }
+            case "5", "voltar", "resumo" -> {
+                conversation.setState(TelegramConversationState.AWAITING_NEW_CUSTOMER_FINAL_CONFIRMATION);
+                conversations.save(conversation);
+                botClient.sendMessage(chatId, newCustomerFinalMessage(conversation), newCustomerFinalKeyboard());
+            }
+            default -> botClient.sendMessage(chatId, "Escolha um campo entre 1 e 5.\n\n" + newCustomerCorrectionQuestion());
+        }
     }
 
     private void assignCustomerAndAdvance(TelegramConversationEntity conversation, TelegramIntakeDraftEntity draft,
@@ -556,7 +644,13 @@ public class TelegramUpdateProcessor {
             if (option.getOptionType() == ConversationCustomerOptionType.EXISTING_CUSTOMER) {
                 builder.append(option.getCustomerNameSnapshot());
                 if (option.getCustomer() != null && option.getCustomer().getExternalId() != null && !option.getCustomer().getExternalId().isBlank()) {
-                    builder.append(" — n.º ").append(option.getCustomer().getExternalId());
+                    builder.append(" — código externo ").append(option.getCustomer().getExternalId());
+                }
+                if (option.getCustomer() != null && option.getCustomer().getCustomerNumber() != null) {
+                    builder.append(" — n.º RucoPlan ").append(option.getCustomer().getCustomerNumber());
+                }
+                if (option.getCustomer() != null && option.getCustomer().getLocality() != null && !option.getCustomer().getLocality().isBlank()) {
+                    builder.append(" — ").append(option.getCustomer().getLocality());
                 }
             } else if (option.getOptionType() == ConversationCustomerOptionType.CREATE_NEW_CUSTOMER) {
                 builder.append(hasExisting ? "Criar novo cliente: " : "Criar novo cliente com este nome");
@@ -596,25 +690,84 @@ public class TelegramUpdateProcessor {
     }
 
     private String newCustomerFinalMessage(TelegramConversationEntity conversation) {
-        ConversationCustomerCandidateEntity createOption = customerResolution.currentOptions(conversation).stream()
-                .filter(option -> option.getOptionType() == ConversationCustomerOptionType.CREATE_NEW_CUSTOMER)
-                .findFirst()
-                .orElse(null);
-        String name = createOption == null ? "Cliente sem nome" : createOption.getOriginalSearchText();
+        CustomerRegistrationRequestEntity registration = currentCustomerRegistration(conversation);
         return """
                 Confirme os dados do novo cliente:
 
                 Nome: %s
-                Número de cliente: Não informado
-                NIF/VAT: Não informado
-                País: Não informado
-                Localidade: Não informado
+                Número de cliente RucoPlan: %d
+                NIF/VAT: %s
+                País: %s
+                Localidade: %s
 
-                Este cliente será registado como pendente de validação administrativa. O pedido de jantes pode continuar normalmente.
+                1 — Confirmar e criar cliente
+                2 — Corrigir dados
+                3 — Cancelar""".formatted(
+                registration.getProposedName(),
+                registration.getReservedCustomerNumber(),
+                registration.getTaxIdentifier(),
+                customerRegistrationRequests.countryName(registration.getCountryCode()),
+                registration.getLocality());
+    }
 
-                1 — Confirmar
-                2 — Corrigir
-                3 — Cancelar""".formatted(name);
+    private CustomerRegistrationRequestEntity currentCustomerRegistration(TelegramConversationEntity conversation) {
+        return customerRegistrationRequests.currentForConversation(conversation);
+    }
+
+    private List<List<TelegramButton>> newCustomerFinalKeyboard() {
+        return List.of(List.of(
+                new TelegramButton("Confirmar e criar cliente", "CUSTOMER_FINAL_CONFIRM"),
+                new TelegramButton("Corrigir dados", "CUSTOMER_NEW_CORRECT"),
+                new TelegramButton("Cancelar", "CUSTOMER_NEW_CANCEL")
+        ));
+    }
+
+    private String newCustomerCorrectionQuestion() {
+        return """
+                Qual dado pretende corrigir?
+
+                1 — Nome
+                2 — NIF/VAT
+                3 — País
+                4 — Localidade
+                5 — Voltar ao resumo""";
+    }
+
+    private String countryQuestion() {
+        return """
+                Qual é o país do novo cliente?
+
+                1 — Portugal
+                2 — Espanha
+                3 — França
+                4 — Luxemburgo
+                5 — Outro país
+
+                Responda com o número ou com o código ISO do país.""";
+    }
+
+    private List<List<TelegramButton>> countryKeyboard() {
+        return List.of(List.of(
+                new TelegramButton("Portugal", "COUNTRY:PT"),
+                new TelegramButton("Espanha", "COUNTRY:ES"),
+                new TelegramButton("França", "COUNTRY:FR"),
+                new TelegramButton("Luxemburgo", "COUNTRY:LU")
+        ));
+    }
+
+    private String countryFromOption(String text) {
+        String normalized = normalizeCommandText(text);
+        if (normalized.startsWith("country:")) {
+            normalized = normalized.substring("country:".length()).trim();
+        }
+        return switch (normalized) {
+            case "1", "portugal", "pt" -> "PT";
+            case "2", "espanha", "spain", "es" -> "ES";
+            case "3", "franca", "frança", "france", "fr" -> "FR";
+            case "4", "luxemburgo", "luxembourg", "lu" -> "LU";
+            case "5", "outro", "outro pais", "outro país" -> "OTHER";
+            default -> normalized.toUpperCase(Locale.ROOT);
+        };
     }
 
     private void handleQuantity(TelegramConversationEntity conversation, Long chatId, String text, WheelType type,

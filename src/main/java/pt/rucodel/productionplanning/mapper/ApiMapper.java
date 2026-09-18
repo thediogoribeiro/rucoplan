@@ -22,7 +22,20 @@ public class ApiMapper {
     }
 
     public CustomerResponse toCustomer(CustomerReferenceEntity entity) {
-        return new CustomerResponse(entity.getId(), entity.getExternalId(), entity.getName(), entity.isActive(), entity.getVersion());
+        return new CustomerResponse(
+                entity.getId(),
+                entity.getCustomerNumber(),
+                entity.getExternalId(),
+                entity.getExternalSystem(),
+                entity.getExternalCustomerId(),
+                entity.getName(),
+                entity.getTaxIdentifier(),
+                entity.getCountryCode(),
+                entity.getLocality(),
+                entity.getStatus() == null ? null : entity.getStatus().name(),
+                entity.isActive(),
+                entity.getVersion()
+        );
     }
 
     public RequestResponse toRequest(WheelIntakeRequestEntity entity) {

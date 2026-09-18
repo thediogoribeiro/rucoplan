@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import pt.rucodel.productionplanning.domain.*;
@@ -48,11 +49,13 @@ class TelegramFlowIntegrationTest {
     @jakarta.annotation.Resource RequestStatusHistoryRepository history;
     @jakarta.annotation.Resource PlanningAuditEventRepository audit;
     @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
+    @jakarta.annotation.Resource JdbcTemplate jdbcTemplate;
 
     private CustomerReferenceEntity customer;
 
     @BeforeEach
     void setUp() {
+        jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS customer_number_seq START WITH 1000 INCREMENT BY 1");
         bot.clear();
         customerCandidates.deleteAll();
         inboundUpdates.deleteAll();
@@ -230,19 +233,43 @@ class TelegramFlowIntegrationTest {
         assertThat(bot.last()).contains("Pretende criar um novo cliente com o nome", "Cliente Lunar Desconhecido");
 
         callback(132, 9153L, 7153L, "CUSTOMER_NEW_CONFIRM");
-        assertThat(bot.last()).contains("Confirme os dados do novo cliente", "NIF/VAT: Não informado", "pendente de validação administrativa");
+        assertThat(bot.last()).contains("Qual é o NIF ou VAT number do novo cliente?");
 
-        process(133, 9153L, 7153L, "driver", "1");
+        process(133, 9153L, 7153L, "driver", "");
+        assertThat(bot.last()).contains("O NIF/VAT é obrigatório");
+        process(134, 9153L, 7153L, "driver", "123456789");
+        assertThat(bot.last()).contains("Qual é o país do novo cliente?");
+        callback(135, 9153L, 7153L, "COUNTRY:PT");
+        assertThat(bot.last()).contains("Qual é a localidade do novo cliente?");
+        process(136, 9153L, 7153L, "driver", " Braga ");
+        assertThat(bot.last()).contains(
+                "Confirme os dados do novo cliente",
+                "Cliente Lunar Desconhecido",
+                "Número de cliente RucoPlan:",
+                "NIF/VAT: 123456789",
+                "País: Portugal",
+                "Localidade: Braga"
+        );
+        assertThat(bot.last()).doesNotContain("pendente de validação administrativa");
+        assertThat(requests.findAll()).isEmpty();
+
+        process(137, 9153L, 7153L, "driver", "1");
         assertThat(bot.last()).contains("2/10 — Quantas jantes bipartidas");
         assertThat(customerRegistrationRequests.findAll()).hasSize(1);
         CustomerRegistrationRequestEntity registration = customerRegistrationRequests.findAll().getFirst();
-        assertThat(registration.getStatus()).isEqualTo(CustomerRegistrationStatus.PENDING_REVIEW);
+        assertThat(registration.getStatus()).isEqualTo(CustomerRegistrationStatus.APPROVED);
         assertThat(registration.getProposedName()).isEqualTo("Cliente Lunar Desconhecido");
-        assertThat(registration.getTaxIdentifier()).isNull();
+        assertThat(registration.getReservedCustomerNumber()).isNotNull();
+        assertThat(registration.getTaxIdentifier()).isEqualTo("123456789");
+        assertThat(registration.getCountryCode()).isEqualTo("PT");
+        assertThat(registration.getLocality()).isEqualTo("Braga");
         TelegramIntakeDraftEntity draft = drafts.findFirstByDriverIdAndStatusOrderByCreatedAtDesc(
                 drivers.findByTelegramUserId(9153L).orElseThrow().getId(), TelegramDraftStatus.ACTIVE).orElseThrow();
-        assertThat(draft.getCustomer()).isNull();
-        assertThat(draft.getCustomerRegistrationRequest().getId()).isEqualTo(registration.getId());
+        assertThat(draft.getCustomer()).isNotNull();
+        CustomerReferenceEntity createdCustomer = customers.findById(draft.getCustomer().getId()).orElseThrow();
+        assertThat(createdCustomer.getCustomerNumber()).isEqualTo(registration.getReservedCustomerNumber());
+        assertThat(createdCustomer.getExternalCustomerId()).isNull();
+        assertThat(draft.getCustomerRegistrationRequest()).isNull();
     }
 
     @Test
@@ -358,6 +385,9 @@ class TelegramFlowIntegrationTest {
     private CustomerReferenceEntity customer(String externalId, String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
         entity.setExternalId(externalId);
+        if (externalId != null && externalId.matches("C[0-9]+")) {
+            entity.setCustomerNumber(Integer.parseInt(externalId.substring(1)));
+        }
         entity.setName(name);
         entity.setActive(true);
         entity.setCreatedBy("TEST");

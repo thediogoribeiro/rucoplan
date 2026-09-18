@@ -30,11 +30,36 @@ public class BootstrapAdminConfig {
                 LOGGER.warn("Bootstrap admin is enabled but username/password are missing; no user was created.");
                 return;
             }
-            if (users.existsByUsername(username.trim())) {
+            String normalizedUsername = username.trim();
+            ApplicationUserEntity existing = users.findByUsername(normalizedUsername).orElse(null);
+            if (existing != null) {
+                boolean changed = false;
+                String normalizedDisplayName = displayName == null || displayName.isBlank() ? "Administrador" : displayName.trim();
+                if (!passwordEncoder.matches(password, existing.getPasswordHash())) {
+                    existing.setPasswordHash(passwordEncoder.encode(password));
+                    changed = true;
+                }
+                if (existing.getRole() != UserRole.ADMIN) {
+                    existing.setRole(UserRole.ADMIN);
+                    changed = true;
+                }
+                if (!existing.isActive()) {
+                    existing.setActive(true);
+                    changed = true;
+                }
+                if (!normalizedDisplayName.equals(existing.getDisplayName())) {
+                    existing.setDisplayName(normalizedDisplayName);
+                    changed = true;
+                }
+                if (changed) {
+                    existing.setUpdatedBy("BOOTSTRAP");
+                    users.save(existing);
+                    LOGGER.info("Development bootstrap administrator refreshed.");
+                }
                 return;
             }
             ApplicationUserEntity user = new ApplicationUserEntity();
-            user.setUsername(username.trim());
+            user.setUsername(normalizedUsername);
             user.setDisplayName(displayName == null || displayName.isBlank() ? "Administrador" : displayName.trim());
             user.setRole(UserRole.ADMIN);
             user.setPasswordHash(passwordEncoder.encode(password));
@@ -42,7 +67,7 @@ public class BootstrapAdminConfig {
             user.setCreatedBy("BOOTSTRAP");
             user.setUpdatedBy("BOOTSTRAP");
             users.save(user);
-            LOGGER.info("Development bootstrap administrator created username={}", username.trim());
+            LOGGER.info("Development bootstrap administrator created.");
         };
     }
 }

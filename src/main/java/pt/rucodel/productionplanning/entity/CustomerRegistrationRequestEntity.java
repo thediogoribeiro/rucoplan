@@ -29,6 +29,9 @@ public class CustomerRegistrationRequestEntity extends BaseEntity {
     @Column(name = "customer_number", length = 120)
     private String customerNumber;
 
+    @Column(name = "reserved_customer_number")
+    private Integer reservedCustomerNumber;
+
     @Column(name = "tax_identifier", length = 80)
     private String taxIdentifier;
 
@@ -104,6 +107,14 @@ public class CustomerRegistrationRequestEntity extends BaseEntity {
 
     public void setCustomerNumber(String customerNumber) {
         this.customerNumber = customerNumber;
+    }
+
+    public Integer getReservedCustomerNumber() {
+        return reservedCustomerNumber;
+    }
+
+    public void setReservedCustomerNumber(Integer reservedCustomerNumber) {
+        this.reservedCustomerNumber = reservedCustomerNumber;
     }
 
     public String getTaxIdentifier() {

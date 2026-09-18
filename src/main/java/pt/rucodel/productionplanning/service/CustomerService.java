@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.dto.CustomerRequest;
 import pt.rucodel.productionplanning.dto.CustomerResponse;
+import pt.rucodel.productionplanning.domain.CustomerStatus;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
 import pt.rucodel.productionplanning.exception.InvalidRequestException;
@@ -32,7 +33,10 @@ public class CustomerService {
     @Transactional(readOnly = true)
     public List<CustomerResponse> search(String query, int limit) {
         return customerDirectory.searchCustomers(query, limit).stream()
-                .map(customer -> new CustomerResponse(customer.localId(), customer.externalId(), customer.officialName(), true, 0))
+                .map(customer -> customers.findById(customer.localId())
+                        .map(mapper::toCustomer)
+                        .orElseGet(() -> new CustomerResponse(customer.localId(), null, customer.externalId(),
+                                null, null, customer.officialName(), null, null, null, null, true, 0)))
                 .toList();
     }
 
@@ -45,6 +49,9 @@ public class CustomerService {
     public CustomerResponse create(CustomerRequest request, String actor) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
         apply(entity, request);
+        if (entity.getCustomerNumber() == null) {
+            entity.setCustomerNumber(customers.nextCustomerNumber());
+        }
         entity.setCreatedBy(actor);
         entity.setUpdatedBy(actor);
         return mapper.toCustomer(customers.save(entity));
@@ -69,12 +76,35 @@ public class CustomerService {
 
     private void apply(CustomerReferenceEntity entity, CustomerRequest request) {
         entity.setExternalId(blankToNull(request.externalId()));
+        entity.setExternalSystem(blankToNull(request.externalSystem()));
+        entity.setExternalCustomerId(blankToNull(request.externalCustomerId()));
+        if (entity.getExternalSystem() != null && entity.getExternalCustomerId() != null) {
+            customers.findByExternalSystemAndExternalCustomerId(entity.getExternalSystem(), entity.getExternalCustomerId())
+                    .filter(existing -> !existing.getId().equals(entity.getId()))
+                    .ifPresent(existing -> {
+                        throw new InvalidRequestException("External customer reference is already linked to another customer.");
+                    });
+        }
         entity.setName(request.name().trim());
         entity.setNormalizedName(normalizer.normalize(request.name()));
+        entity.setTaxIdentifier(normalizeTaxIdentifier(request.taxIdentifier()));
+        entity.setCountryCode(normalizeCountryCode(request.countryCode()));
+        entity.setLocality(blankToNull(request.locality()));
         entity.setActive(request.active() == null || request.active());
+        entity.setStatus(entity.isActive() ? CustomerStatus.ACTIVE : CustomerStatus.INACTIVE);
     }
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String normalizeTaxIdentifier(String value) {
+        String clean = blankToNull(value);
+        return clean == null ? null : clean.replaceAll("\\s+", "").toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private String normalizeCountryCode(String value) {
+        String clean = blankToNull(value);
+        return clean == null ? null : clean.toUpperCase(java.util.Locale.ROOT);
     }
 }

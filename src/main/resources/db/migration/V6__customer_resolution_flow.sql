@@ -109,10 +109,6 @@ CREATE TABLE conversation_customer_candidate (
 CREATE INDEX idx_conversation_customer_candidate_conversation ON conversation_customer_candidate (conversation_id);
 CREATE INDEX idx_conversation_customer_candidate_customer ON conversation_customer_candidate (customer_id);
 
-UPDATE telegram_conversation
-SET state = 'AWAITING_CUSTOMER_NAME'
-WHERE state = 'AWAITING_CUSTOMER';
-
 ALTER TABLE telegram_conversation DROP CONSTRAINT ck_telegram_conversation_state;
 ALTER TABLE telegram_conversation ADD CONSTRAINT ck_telegram_conversation_state CHECK (state IN (
     'AWAITING_DRIVER_NAME',
@@ -135,3 +131,7 @@ ALTER TABLE telegram_conversation ADD CONSTRAINT ck_telegram_conversation_state 
     'AWAITING_CORRECTION_FIELD',
     'AWAITING_NEW_DRAFT_CONFIRMATION'
 ));
+
+UPDATE telegram_conversation
+SET state = 'AWAITING_CUSTOMER_NAME'
+WHERE state = 'AWAITING_CUSTOMER';

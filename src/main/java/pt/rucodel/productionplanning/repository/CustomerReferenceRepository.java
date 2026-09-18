@@ -12,9 +12,20 @@ import java.util.UUID;
 public interface CustomerReferenceRepository extends JpaRepository<CustomerReferenceEntity, UUID> {
     Optional<CustomerReferenceEntity> findByExternalId(String externalId);
 
+    Optional<CustomerReferenceEntity> findByCustomerNumber(Integer customerNumber);
+
     List<CustomerReferenceEntity> findByNameIgnoreCase(String name);
 
     List<CustomerReferenceEntity> findByActiveTrueAndNormalizedNameOrderByNameAscIdAsc(String normalizedName);
+
+    List<CustomerReferenceEntity> findByActiveTrueAndTaxIdentifierAndCountryCodeOrderByNameAscIdAsc(String taxIdentifier, String countryCode);
+
+    boolean existsByExternalSystemAndExternalCustomerId(String externalSystem, String externalCustomerId);
+
+    Optional<CustomerReferenceEntity> findByExternalSystemAndExternalCustomerId(String externalSystem, String externalCustomerId);
+
+    @Query(value = "select nextval('customer_number_seq')", nativeQuery = true)
+    Integer nextCustomerNumber();
 
     @Query("""
             select c from CustomerReferenceEntity c
