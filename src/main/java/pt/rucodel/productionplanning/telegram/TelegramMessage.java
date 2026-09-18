@@ -8,6 +8,10 @@ public record TelegramMessage(
         @JsonProperty("message_id") Long messageId,
         TelegramUser from,
         TelegramChat chat,
-        String text
+        String text,
+        TelegramContact contact
 ) {
+    public TelegramMessage(Long messageId, TelegramUser from, TelegramChat chat, String text) {
+        this(messageId, from, chat, text, null);
+    }
 }

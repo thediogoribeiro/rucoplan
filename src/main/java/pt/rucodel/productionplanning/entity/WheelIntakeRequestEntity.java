@@ -21,7 +21,8 @@ import java.util.UUID;
                 @Index(name = "idx_wheel_request_pickup_start", columnList = "requested_factory_pickup_start"),
                 @Index(name = "idx_wheel_request_dropoff_end", columnList = "expected_factory_dropoff_end"),
                 @Index(name = "idx_wheel_request_status", columnList = "lifecycle_status"),
-                @Index(name = "idx_wheel_request_external_message", columnList = "external_message_id")
+                @Index(name = "idx_wheel_request_external_message", columnList = "external_message_id"),
+                @Index(name = "idx_wheel_request_submitted_identity", columnList = "submitted_by_identity_id")
         }
 )
 public class WheelIntakeRequestEntity extends BaseEntity {
@@ -52,6 +53,10 @@ public class WheelIntakeRequestEntity extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "driver_id", nullable = false)
     private DriverEntity driver;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "submitted_by_identity_id")
+    private MessagingIdentityEntity submittedByIdentity;
 
     @Column(name = "expected_wheel_quantity", nullable = false)
     private int expectedWheelQuantity;
@@ -193,6 +198,14 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     public void setDriver(DriverEntity driver) {
         this.driver = driver;
+    }
+
+    public MessagingIdentityEntity getSubmittedByIdentity() {
+        return submittedByIdentity;
+    }
+
+    public void setSubmittedByIdentity(MessagingIdentityEntity submittedByIdentity) {
+        this.submittedByIdentity = submittedByIdentity;
     }
 
     public int getExpectedWheelQuantity() {

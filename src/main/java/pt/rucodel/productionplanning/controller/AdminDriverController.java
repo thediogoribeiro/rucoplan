@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import pt.rucodel.productionplanning.dto.DriverRequest;
 import pt.rucodel.productionplanning.dto.DriverResponse;
+import pt.rucodel.productionplanning.dto.AdminDriverDetailResponse;
 import pt.rucodel.productionplanning.security.CurrentUserService;
 import pt.rucodel.productionplanning.service.DriverService;
 
@@ -25,6 +26,11 @@ public class AdminDriverController {
     @GetMapping
     public List<DriverResponse> list() {
         return drivers.list();
+    }
+
+    @GetMapping("/{driverId}")
+    public AdminDriverDetailResponse get(@PathVariable UUID driverId) {
+        return drivers.get(driverId);
     }
 
     @PostMapping

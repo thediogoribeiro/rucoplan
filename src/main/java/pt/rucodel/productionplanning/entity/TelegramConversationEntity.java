@@ -10,7 +10,8 @@ import java.util.UUID;
         name = "telegram_conversation",
         indexes = {
                 @Index(name = "idx_telegram_conversation_user", columnList = "telegram_user_id", unique = true),
-                @Index(name = "idx_telegram_conversation_driver", columnList = "driver_id")
+                @Index(name = "idx_telegram_conversation_driver", columnList = "driver_id"),
+                @Index(name = "idx_telegram_conversation_identity", columnList = "messaging_identity_id")
         }
 )
 public class TelegramConversationEntity extends BaseEntity {
@@ -27,6 +28,10 @@ public class TelegramConversationEntity extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "driver_id")
     private DriverEntity driver;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "messaging_identity_id")
+    private MessagingIdentityEntity messagingIdentity;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "state", nullable = false, length = 60)
@@ -73,6 +78,14 @@ public class TelegramConversationEntity extends BaseEntity {
 
     public void setDriver(DriverEntity driver) {
         this.driver = driver;
+    }
+
+    public MessagingIdentityEntity getMessagingIdentity() {
+        return messagingIdentity;
+    }
+
+    public void setMessagingIdentity(MessagingIdentityEntity messagingIdentity) {
+        this.messagingIdentity = messagingIdentity;
     }
 
     public TelegramConversationState getState() {

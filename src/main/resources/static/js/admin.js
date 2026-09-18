@@ -7,6 +7,7 @@ const state = {
   planningTargets: [],
   settings: null,
   drivers: [],
+  messagingIdentities: [],
   customers: [],
   requests: [],
   audit: [],
@@ -58,13 +59,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadAdminData() {
   const from = pp.addDays(state.date, -2);
   const to = pp.addDays(state.date, 7);
-  const [dashboard, productionPlan, productionPlans, planningTargets, settings, drivers, customers, requests, audit, capacityAlerts] = await Promise.all([
+  const [dashboard, productionPlan, productionPlans, planningTargets, settings, drivers, messagingIdentities, customers, requests, audit, capacityAlerts] = await Promise.all([
     api.get(`/api/v1/admin/dashboard?date=${state.date}`),
     api.get(`/api/v1/admin/production-plans/${state.date}`),
     api.get(`/api/v1/admin/production-plans?from=${from}&to=${to}`),
     api.get('/api/v1/admin/planning-targets'),
     api.get(`/api/v1/admin/settings/daily?date=${state.date}`),
     api.get('/api/v1/admin/drivers'),
+    api.get('/api/v1/admin/messaging-identities'),
     api.get('/api/v1/admin/customers'),
     api.get('/api/v1/admin/requests?size=200'),
     api.get('/api/v1/admin/audit?size=50'),
@@ -76,6 +78,7 @@ async function loadAdminData() {
   state.planningTargets = planningTargets || [];
   state.settings = settings;
   state.drivers = drivers;
+  state.messagingIdentities = messagingIdentities || [];
   state.customers = customers;
   state.requests = requests.content || [];
   state.audit = audit.content || [];
@@ -668,9 +671,22 @@ async function saveSettings(event) {
 }
 
 function renderDrivers() {
+  const query = (state.driverIdentityQuery || '').toLowerCase();
+  const identities = state.messagingIdentities.filter(identity => {
+    const haystack = [
+      identity.driverName,
+      identity.externalUsername,
+      identity.platformFirstName,
+      identity.platformLastName,
+      identity.externalUserId,
+      identity.channel,
+      identity.onboardingStatus
+    ].filter(Boolean).join(' ').toLowerCase();
+    return !query || haystack.includes(query);
+  });
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
-      <div class="section-header"><h2>Motoristas/Vendedores</h2></div>
+      <div class="section-header"><h2>Motoristas e ligações</h2></div>
       <form id="driver-form" class="form-grid">
         <label>Código externo<input name="externalId"></label>
         <label>Nome<input name="name" required></label>
@@ -678,11 +694,51 @@ function renderDrivers() {
         <label>Palavra-passe<input name="password" type="password"></label>
         <button type="submit">Criar motorista</button>
       </form>
-      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Nome</th><th>Código</th><th>Estado</th></tr></thead><tbody>
-        ${state.drivers.map(driver => `<tr><td>${pp.escapeHtml(driver.name)}</td><td>${pp.escapeHtml(driver.externalId || '-')}</td><td>${driver.active ? 'Ativo' : 'Inativo'}</td></tr>`).join('')}
+      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Nome</th><th>Código</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
+        ${state.drivers.map(driver => `<tr>
+          <td>${pp.escapeHtml(driver.name)}</td>
+          <td>${pp.escapeHtml(driver.externalId || '-')}</td>
+          <td>${driver.active ? 'Ativo' : 'Inativo'}</td>
+          <td><button type="button" class="secondary" data-driver-rename="${driver.id}">Corrigir nome</button></td>
+        </tr>`).join('')}
       </tbody></table></div>
+    </section>
+    <section class="panel">
+      <div class="section-header"><h2>Identidades Telegram e canais de comunicação</h2></div>
+      <label>Pesquisar por nome, username ou identificador
+        <input id="identity-search" value="${pp.escapeHtml(state.driverIdentityQuery || '')}">
+      </label>
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th>Motorista</th><th>Canal</th><th>Username</th><th>Perfil Telegram</th><th>Identificador externo</th><th>Contacto</th><th>Primeira interação</th><th>Última atividade</th><th>Onboarding</th><th>Pedidos</th><th>Ações</th></tr></thead>
+        <tbody>${identities.map(identity => `<tr>
+          <td>${pp.escapeHtml(identity.driverName || 'Pendente')}</td>
+          <td>${pp.escapeHtml(identity.channel)}</td>
+          <td>${pp.escapeHtml(identity.externalUsername || '-')}</td>
+          <td>${pp.escapeHtml([identity.platformFirstName, identity.platformLastName].filter(Boolean).join(' ') || '-')}</td>
+          <td>${pp.escapeHtml(identity.externalUserId)}</td>
+          <td>${pp.escapeHtml(identity.maskedPhoneNumber || '-')}</td>
+          <td>${pp.formatDateTime(identity.firstSeenAt)}</td>
+          <td>${pp.formatDateTime(identity.lastSeenAt)}</td>
+          <td>${pp.escapeHtml(identity.onboardingStatus)}</td>
+          <td>${identity.requestCount || 0}${identity.lastRequestAt ? `<br><small>${pp.formatDateTime(identity.lastRequestAt)}</small>` : ''}</td>
+          <td>
+            ${identity.blockedAt
+              ? `<button type="button" class="secondary" data-identity-reactivate="${identity.id}">Reativar</button>`
+              : `<button type="button" class="secondary" data-identity-block="${identity.id}">Bloquear</button>`}
+            <button type="button" class="secondary" data-identity-link="${identity.id}">Associar</button>
+          </td>
+        </tr>`).join('')}</tbody>
+      </table></div>
     </section>`;
   document.querySelector('#driver-form').addEventListener('submit', createDriver);
+  document.querySelector('#identity-search')?.addEventListener('input', event => {
+    state.driverIdentityQuery = event.target.value;
+    renderDrivers();
+  });
+  document.querySelectorAll('[data-driver-rename]').forEach(button => button.addEventListener('click', () => renameDriver(button.dataset.driverRename)));
+  document.querySelectorAll('[data-identity-block]').forEach(button => button.addEventListener('click', () => blockIdentity(button.dataset.identityBlock)));
+  document.querySelectorAll('[data-identity-reactivate]').forEach(button => button.addEventListener('click', () => reactivateIdentity(button.dataset.identityReactivate)));
+  document.querySelectorAll('[data-identity-link]').forEach(button => button.addEventListener('click', () => linkIdentity(button.dataset.identityLink)));
 }
 
 async function createDriver(event) {
@@ -694,6 +750,50 @@ async function createDriver(event) {
     active: true,
     username: form.username.value.trim(),
     password: form.password.value
+  });
+  await loadAdminData();
+  renderDrivers();
+}
+
+async function renameDriver(id) {
+  const driver = state.drivers.find(item => item.id === id);
+  const name = prompt('Novo nome do motorista:', driver?.name || '');
+  if (!name || !name.trim()) return;
+  await api.patchJson(`/api/v1/admin/drivers/${id}`, {
+    externalId: driver.externalId || '',
+    name: name.trim(),
+    active: driver.active,
+    version: driver.version
+  });
+  await loadAdminData();
+  renderDrivers();
+}
+
+async function blockIdentity(id) {
+  if (!confirm('Bloquear esta ligação Telegram?')) return;
+  await api.postJson(`/api/v1/admin/messaging-identities/${id}/block`, {});
+  await loadAdminData();
+  renderDrivers();
+}
+
+async function reactivateIdentity(id) {
+  await api.postJson(`/api/v1/admin/messaging-identities/${id}/reactivate`, {});
+  await loadAdminData();
+  renderDrivers();
+}
+
+async function linkIdentity(id) {
+  const driverName = prompt('Nome exato do motorista existente a associar:');
+  if (!driverName || !driverName.trim()) return;
+  const driver = state.drivers.find(item => item.name.toLowerCase() === driverName.trim().toLowerCase());
+  if (!driver) {
+    alert('Motorista não encontrado.');
+    return;
+  }
+  if (!confirm(`Associar esta identidade a ${driver.name}?`)) return;
+  await api.postJson(`/api/v1/admin/messaging-identities/${id}/link`, {
+    driverId: driver.id,
+    reason: 'Associação manual no painel administrativo'
   });
   await loadAdminData();
   renderDrivers();

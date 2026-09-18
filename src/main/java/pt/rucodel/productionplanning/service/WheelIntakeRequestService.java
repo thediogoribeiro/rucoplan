@@ -9,6 +9,7 @@ import pt.rucodel.productionplanning.domain.*;
 import pt.rucodel.productionplanning.dto.*;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
+import pt.rucodel.productionplanning.entity.MessagingIdentityEntity;
 import pt.rucodel.productionplanning.entity.RequestStatusHistoryEntity;
 import pt.rucodel.productionplanning.entity.WheelIntakeRequestEntity;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
@@ -151,12 +152,37 @@ public class WheelIntakeRequestService {
 
     @Transactional
     public WheelIntakeRequestEntity createFromTelegram(String externalMessageId, DriverEntity driver,
+                                                       MessagingIdentityEntity submittedByIdentity,
                                                        CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
                                                        OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
                                                        FactoryTimeSlot dropoffSlot,
                                                        OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
                                                        FactoryTimeSlot pickupSlot,
                                                        String notes) {
+        return createFromTelegramInternal(externalMessageId, driver, submittedByIdentity, customer, quantities,
+                dropOffStart, dropOffEnd, dropoffSlot, pickupStart, pickupEnd, pickupSlot, notes);
+    }
+
+    @Transactional
+    public WheelIntakeRequestEntity createFromTelegram(String externalMessageId, DriverEntity driver,
+                                                       CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                       OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
+                                                       FactoryTimeSlot dropoffSlot,
+                                                       OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
+                                                       FactoryTimeSlot pickupSlot,
+                                                       String notes) {
+        return createFromTelegramInternal(externalMessageId, driver, null, customer, quantities,
+                dropOffStart, dropOffEnd, dropoffSlot, pickupStart, pickupEnd, pickupSlot, notes);
+    }
+
+    private WheelIntakeRequestEntity createFromTelegramInternal(String externalMessageId, DriverEntity driver,
+                                                               MessagingIdentityEntity submittedByIdentity,
+                                                               CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                               OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
+                                                               FactoryTimeSlot dropoffSlot,
+                                                               OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
+                                                               FactoryTimeSlot pickupSlot,
+                                                               String notes) {
         String idempotencyKey = blankToNull(externalMessageId);
         if (idempotencyKey != null) {
             java.util.Optional<WheelIntakeRequestEntity> existing = requests.findByExternalMessageId(idempotencyKey);
@@ -178,6 +204,7 @@ public class WheelIntakeRequestService {
                 notes,
                 "TELEGRAM"
         );
+        entity.setSubmittedByIdentity(submittedByIdentity);
         entity.setFactoryDropoffSlot(dropoffSlot);
         entity.setFactoryPickupSlot(pickupSlot);
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);

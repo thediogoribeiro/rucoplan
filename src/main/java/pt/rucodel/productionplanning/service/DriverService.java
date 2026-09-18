@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.dto.DriverRequest;
 import pt.rucodel.productionplanning.dto.DriverResponse;
+import pt.rucodel.productionplanning.dto.AdminDriverDetailResponse;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
@@ -24,19 +25,28 @@ public class DriverService {
     private final PasswordEncoder passwordEncoder;
     private final ApiMapper mapper;
     private final RecalculationService recalculationService;
+    private final AdminMessagingIdentityService adminMessagingIdentities;
 
     public DriverService(DriverRepository drivers, ApplicationUserRepository users, PasswordEncoder passwordEncoder,
-                         ApiMapper mapper, RecalculationService recalculationService) {
+                         ApiMapper mapper, RecalculationService recalculationService,
+                         AdminMessagingIdentityService adminMessagingIdentities) {
         this.drivers = drivers;
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.mapper = mapper;
         this.recalculationService = recalculationService;
+        this.adminMessagingIdentities = adminMessagingIdentities;
     }
 
     @Transactional(readOnly = true)
     public List<DriverResponse> list() {
         return drivers.findAll().stream().map(mapper::toDriver).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public AdminDriverDetailResponse get(UUID id) {
+        DriverEntity driver = drivers.findById(id).orElseThrow(() -> new EntityNotFoundException("Driver was not found."));
+        return adminMessagingIdentities.driverDetail(driver);
     }
 
     @Transactional

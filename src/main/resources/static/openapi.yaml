@@ -281,6 +281,61 @@ paths:
           description: Update accepted
         "401":
           description: Missing or invalid webhook secret
+  /admin/drivers/{id}:
+    get:
+      summary: Administrator driver detail with linked messaging identities
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Driver detail
+    patch:
+      summary: Update administrator-managed driver data
+      responses:
+        "200":
+          description: Updated driver
+  /admin/messaging-identities:
+    get:
+      summary: List communication identities linked to drivers
+      responses:
+        "200":
+          description: Messaging identity list
+  /admin/messaging-identities/{id}:
+    get:
+      summary: Messaging identity detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Messaging identity detail
+  /admin/messaging-identities/{id}/link:
+    post:
+      summary: Link a messaging identity to an existing driver
+      responses:
+        "200":
+          description: Linked identity
+  /admin/messaging-identities/{id}/block:
+    post:
+      summary: Block a messaging identity from creating Telegram requests
+      responses:
+        "200":
+          description: Blocked identity
+  /admin/messaging-identities/{id}/reactivate:
+    post:
+      summary: Reactivate a blocked messaging identity
+      responses:
+        "200":
+          description: Reactivated identity
 components:
   securitySchemes:
     bearerAuth:

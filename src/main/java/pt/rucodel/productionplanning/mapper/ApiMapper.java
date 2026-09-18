@@ -37,6 +37,7 @@ public class ApiMapper {
                 entity.getCustomerNameSnapshot(),
                 entity.getDriver().getId(),
                 entity.getDriver().getName(),
+                entity.getSubmittedByIdentity() == null ? null : entity.getSubmittedByIdentity().getId(),
                 wheelQuantities.toDto(entity.wheelQuantityMap()),
                 entity.getExpectedWheelQuantity(),
                 entity.getExpectedWheelQuantity(),

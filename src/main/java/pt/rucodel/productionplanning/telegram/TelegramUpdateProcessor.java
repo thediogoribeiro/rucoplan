@@ -10,7 +10,10 @@ import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.integration.CustomerDirectoryCustomer;
 import pt.rucodel.productionplanning.integration.CustomerDirectoryPort;
 import pt.rucodel.productionplanning.repository.*;
+import pt.rucodel.productionplanning.service.DriverRegistrationService;
 import pt.rucodel.productionplanning.service.DriverIntakeConversationService;
+import pt.rucodel.productionplanning.service.MessagingIdentityService;
+import pt.rucodel.productionplanning.service.TelegramIdentitySnapshot;
 import pt.rucodel.productionplanning.service.WheelIntakeRequestService;
 
 import java.text.Normalizer;
@@ -37,6 +40,8 @@ public class TelegramUpdateProcessor {
     private final WheelIntakeRequestService intakeRequests;
     private final TelegramBotClient botClient;
     private final DriverIntakeConversationService conversationFlow;
+    private final MessagingIdentityService messagingIdentities;
+    private final DriverRegistrationService driverRegistration;
     private final Clock clock;
     private final ZoneId businessZone;
     private final LocalTime overnightEndTime;
@@ -51,6 +56,8 @@ public class TelegramUpdateProcessor {
                                    WheelIntakeRequestService intakeRequests,
                                    TelegramBotClient botClient,
                                    DriverIntakeConversationService conversationFlow,
+                                   MessagingIdentityService messagingIdentities,
+                                   DriverRegistrationService driverRegistration,
                                    Clock clock,
                                    pt.rucodel.productionplanning.service.AppProperties appProperties,
                                    @Value("${app.planning.overnight-end-time:06:00}") String overnightEndTime) {
@@ -64,6 +71,8 @@ public class TelegramUpdateProcessor {
         this.intakeRequests = intakeRequests;
         this.botClient = botClient;
         this.conversationFlow = conversationFlow;
+        this.messagingIdentities = messagingIdentities;
+        this.driverRegistration = driverRegistration;
         this.clock = clock;
         this.businessZone = ZoneId.of(appProperties.timezone());
         this.overnightEndTime = LocalTime.parse(overnightEndTime);
@@ -116,12 +125,30 @@ public class TelegramUpdateProcessor {
         }
 
         String text = callback == null ? nullToBlank(message.text()) : nullToBlank(callback.data());
-        DriverEntity driver = drivers.findByTelegramUserId(from.id()).orElse(null);
+        TelegramIdentitySnapshot identitySnapshot = new TelegramIdentitySnapshot(
+                from.id(),
+                chatId,
+                from.username(),
+                from.firstName(),
+                from.lastName(),
+                from.languageCode()
+        );
+        MessagingIdentityEntity identity = messagingIdentities.resolveTelegramIdentity(identitySnapshot);
+        DriverEntity driver = identity.getDriver();
+        if (driver == null) {
+            driver = drivers.findByTelegramUserId(from.id()).orElse(null);
+            if (driver != null) {
+                identity.setDriver(driver);
+                messagingIdentities.record(identity, MessagingIdentityEventType.IDENTITY_LINKED,
+                        "SYSTEM", "LEGACY_TELEGRAM_USER_ID", "Linked from legacy driver telegram_user_id.");
+            }
+        }
         TelegramConversationEntity conversation = conversations.findWithLockByTelegramUserId(from.id())
                 .orElseGet(() -> newConversation(from.id(), chatId));
         conversation.setTelegramChatId(chatId);
+        conversation.setMessagingIdentity(identity);
         if (driver != null) {
-            updateDriverTelegramMetadata(driver, from, chatId);
+            driverRegistration.refreshLegacyTelegramFields(driver, identitySnapshot);
             conversation.setDriver(driver);
             if (conversation.getState() == TelegramConversationState.AWAITING_DRIVER_NAME) {
                 conversation.setState(TelegramConversationState.IDLE);
@@ -129,13 +156,27 @@ public class TelegramUpdateProcessor {
         }
 
         String command = command(text);
+        if (message.contact() != null) {
+            handleOptionalContact(identity, from, chatId, message.contact(), conversation);
+            return;
+        }
+        if ("ignorar".equals(normalizeCommandText(text))) {
+            botClient.sendMessage(chatId, "Sem problema. Pode continuar sem partilhar contacto.");
+            askForCurrentState(conversation, chatId);
+            return;
+        }
         if ("/ajuda".equals(command)) {
             botClient.sendMessage(chatId, helpText());
             return;
         }
 
         if (driver == null) {
-            handleOnboarding(conversation, from, chatId, text, command);
+            handleOnboarding(conversation, identity, identitySnapshot, chatId, text, command);
+            return;
+        }
+
+        if (identity.getBlockedAt() != null || identity.getOnboardingStatus() == MessagingIdentityOnboardingStatus.BLOCKED) {
+            botClient.sendMessage(chatId, "A sua ligação Telegram está bloqueada. Contacte o administrador para voltar a criar pedidos.");
             return;
         }
 
@@ -150,6 +191,10 @@ public class TelegramUpdateProcessor {
         }
         if ("/pedidos".equals(command)) {
             sendRecentRequests(driver, chatId);
+            return;
+        }
+        if ("/perfil".equals(command)) {
+            handleProfileCommand(driver, chatId, text);
             return;
         }
         if ("/start".equals(command)) {
@@ -180,31 +225,74 @@ public class TelegramUpdateProcessor {
         return conversation;
     }
 
-    private void handleOnboarding(TelegramConversationEntity conversation, TelegramUser from, Long chatId,
+    private void handleOnboarding(TelegramConversationEntity conversation, MessagingIdentityEntity identity,
+                                  TelegramIdentitySnapshot snapshot, Long chatId,
                                   String text, String command) {
         conversation.setState(TelegramConversationState.AWAITING_DRIVER_NAME);
         if ("/start".equals(command) || text.isBlank() || command != null) {
             conversations.save(conversation);
-            botClient.sendMessage(chatId, "Bem-vindo ao planeamento da Rucodel. Antes de começar, qual é o seu nome?");
+            botClient.sendMessage(chatId, """
+                    Bem-vindo ao Rucodel Bot.
+
+                    Antes de começarmos, qual é o seu nome?""");
             return;
         }
-        String name = normalizeSpaces(text);
-        if (name.isBlank()) {
-            botClient.sendMessage(chatId, "O nome não pode ficar vazio. Qual é o seu nome?");
+        DriverEntity savedDriver;
+        try {
+            savedDriver = driverRegistration.registerFromTelegramName(identity, snapshot, text);
+        } catch (pt.rucodel.productionplanning.exception.InvalidRequestException ex) {
+            botClient.sendMessage(chatId, ex.getMessage() + "\n\nQual é o seu nome?");
             return;
         }
-        DriverEntity driver = new DriverEntity();
-        driver.setName(name);
-        driver.setActive(true);
-        driver.setCreatedBy("TELEGRAM");
-        driver.setUpdatedBy("TELEGRAM");
-        updateDriverTelegramMetadata(driver, from, chatId);
-        DriverEntity savedDriver = drivers.saveAndFlush(driver);
         conversation.setDriver(savedDriver);
         conversation.setState(TelegramConversationState.IDLE);
         conversations.save(conversation);
-        botClient.sendMessage(chatId, "Obrigado, " + savedDriver.getName() + ". O seu registo foi criado. Vamos registar um novo pedido.");
+        botClient.sendMessage(chatId, "Obrigado, " + savedDriver.getName() + ". O seu registo foi concluído.");
+        botClient.sendMessage(chatId,
+                "Se pretender, pode partilhar o seu número de contacto. Esta informação é opcional.",
+                List.of(List.of(
+                        TelegramButton.requestContact("Partilhar contacto"),
+                        new TelegramButton("Ignorar", "Ignorar")
+                )));
         startDraft(conversation, savedDriver, chatId);
+    }
+
+    private void handleOptionalContact(MessagingIdentityEntity identity, TelegramUser from, Long chatId,
+                                       TelegramContact contact, TelegramConversationEntity conversation) {
+        if (contact.userId() != null && !contact.userId().equals(from.id())) {
+            botClient.sendMessage(chatId, "Não posso aceitar o contacto de outra pessoa. Esta informação é opcional.");
+            askForCurrentState(conversation, chatId);
+            return;
+        }
+        String phone = normalizePhone(contact.phoneNumber());
+        if (phone == null) {
+            botClient.sendMessage(chatId, "Não consegui validar esse número. Pode continuar sem partilhar contacto.");
+            askForCurrentState(conversation, chatId);
+            return;
+        }
+        identity.setPhoneNumber(phone);
+        identity.setUpdatedBy("TELEGRAM");
+        messagingIdentities.record(identity, MessagingIdentityEventType.CONTACT_SHARED, "TELEGRAM", identity.getExternalUserId(), null);
+        botClient.sendMessage(chatId, "Contacto guardado. Obrigado.");
+        askForCurrentState(conversation, chatId);
+    }
+
+    private void handleProfileCommand(DriverEntity driver, Long chatId, String text) {
+        String argument = text == null ? "" : text.replaceFirst("(?i)^/perfil(@\\w+)?", "").trim();
+        if (argument.isBlank()) {
+            botClient.sendMessage(chatId, "O nome registado é: " + driver.getName()
+                    + "\n\nPara alterar, envie /perfil seguido do novo nome. Exemplo: /perfil João Martins");
+            return;
+        }
+        try {
+            String newName = driverRegistration.validateAndNormalizeName(argument);
+            driver.setName(newName);
+            driver.setUpdatedBy("TELEGRAM");
+            drivers.save(driver);
+            botClient.sendMessage(chatId, "Nome atualizado para: " + newName);
+        } catch (pt.rucodel.productionplanning.exception.InvalidRequestException ex) {
+            botClient.sendMessage(chatId, ex.getMessage());
+        }
     }
 
     private void resumeOrStart(TelegramConversationEntity conversation, DriverEntity driver, Long chatId) {
@@ -577,6 +665,7 @@ public class TelegramUpdateProcessor {
         WheelIntakeRequestEntity request = intakeRequests.createFromTelegram(
                 "telegram-draft-" + draft.getId(),
                 draft.getDriver(),
+                conversation.getMessagingIdentity(),
                 draft.getCustomer(),
                 draft.wheelQuantityMap(),
                 dropoffStart,
@@ -740,21 +829,8 @@ public class TelegramUpdateProcessor {
                 /novo — criar um novo pedido
                 /cancelar — cancelar o pedido em curso
                 /pedidos — ver pedidos recentes
+                /perfil — consultar ou alterar o nome registado
                 /ajuda — mostrar esta ajuda""";
-    }
-
-    private void updateDriverTelegramMetadata(DriverEntity driver, TelegramUser from, Long chatId) {
-        OffsetDateTime now = OffsetDateTime.now(clock);
-        driver.setTelegramUserId(from.id());
-        driver.setTelegramChatId(chatId);
-        driver.setTelegramUsername(blankToNull(from.username()));
-        driver.setTelegramFirstName(blankToNull(from.firstName()));
-        driver.setTelegramLastName(blankToNull(from.lastName()));
-        if (driver.getTelegramLinkedAt() == null) {
-            driver.setTelegramLinkedAt(now);
-        }
-        driver.setTelegramLastInteractionAt(now);
-        driver.setUpdatedBy("TELEGRAM");
     }
 
     private String normalizeNotes(String text) {
@@ -800,6 +876,20 @@ public class TelegramUpdateProcessor {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String normalizePhone(String rawPhone) {
+        if (rawPhone == null || rawPhone.isBlank()) {
+            return null;
+        }
+        String normalized = rawPhone.trim().replaceAll("[\\s().-]", "");
+        if (normalized.startsWith("00")) {
+            normalized = "+" + normalized.substring(2);
+        }
+        if (!normalized.startsWith("+")) {
+            normalized = "+" + normalized;
+        }
+        return normalized.matches("\\+[1-9][0-9]{6,14}") ? normalized : null;
     }
 
     private String safeError(RuntimeException ex) {

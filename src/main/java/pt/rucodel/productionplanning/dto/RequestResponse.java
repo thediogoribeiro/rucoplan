@@ -17,6 +17,7 @@ public record RequestResponse(
         String customerNameSnapshot,
         UUID driverId,
         String driverName,
+        UUID submittedByIdentityId,
         List<WheelQuantityDto> wheelQuantities,
         int totalQuantity,
         @Deprecated

@@ -19,6 +19,8 @@ public interface WheelIntakeRequestRepository extends JpaRepository<WheelIntakeR
 
     Page<WheelIntakeRequestEntity> findByDriverId(UUID driverId, Pageable pageable);
 
+    long countByDriverId(UUID driverId);
+
     @Query("""
             select r from WheelIntakeRequestEntity r
             where (:driverId is null or r.driver.id = :driverId)

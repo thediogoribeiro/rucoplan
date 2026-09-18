@@ -37,6 +37,8 @@ class TelegramFlowIntegrationTest {
     @jakarta.annotation.Resource TelegramConversationRepository conversations;
     @jakarta.annotation.Resource TelegramIntakeDraftRepository drafts;
     @jakarta.annotation.Resource TelegramInboundUpdateRepository inboundUpdates;
+    @jakarta.annotation.Resource MessagingIdentityRepository messagingIdentities;
+    @jakarta.annotation.Resource MessagingIdentityEventRepository messagingIdentityEvents;
     @jakarta.annotation.Resource CapacityAlertRepository capacityAlerts;
     @jakarta.annotation.Resource DailyProductionSettingsRepository settings;
     @jakarta.annotation.Resource ProductionPlanRepository plans;
@@ -51,6 +53,7 @@ class TelegramFlowIntegrationTest {
     void setUp() {
         bot.clear();
         inboundUpdates.deleteAll();
+        messagingIdentityEvents.deleteAll();
         conversations.deleteAll();
         drafts.deleteAll();
         capacityAlerts.deleteAll();
@@ -60,6 +63,7 @@ class TelegramFlowIntegrationTest {
         audit.deleteAll();
         whatsapp.deleteAll();
         requests.deleteAll();
+        messagingIdentities.deleteAll();
         settings.deleteAll();
         customers.deleteAll();
         drivers.deleteAll();
@@ -72,8 +76,13 @@ class TelegramFlowIntegrationTest {
     void newTelegramUserCreatesDriverAndDoesNotCreateDuplicatesWhenUsernameChanges() {
         process(1, 9001L, 7001L, "olduser", "/start");
 
-        assertThat(bot.last()).contains("Bem-vindo ao planeamento da Rucodel");
+        assertThat(bot.last()).contains("Bem-vindo ao Rucodel Bot", "qual é o seu nome");
         assertThat(drivers.findByTelegramUserId(9001L)).isEmpty();
+        MessagingIdentityEntity identity = messagingIdentities
+                .findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9001")
+                .orElseThrow();
+        assertThat(identity.getDriver()).isNull();
+        assertThat(identity.getOnboardingStatus()).isEqualTo(MessagingIdentityOnboardingStatus.AWAITING_DRIVER_NAME);
 
         process(2, 9001L, 7001L, "olduser", "  João   Martins ");
 
@@ -81,13 +90,21 @@ class TelegramFlowIntegrationTest {
         assertThat(driver.getName()).isEqualTo("João Martins");
         assertThat(driver.getTelegramChatId()).isEqualTo(7001L);
         assertThat(driver.getTelegramUsername()).isEqualTo("olduser");
-        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Obrigado, João Martins"));
+        identity = messagingIdentities
+                .findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9001")
+                .orElseThrow();
+        assertThat(identity.getDriver().getId()).isEqualTo(driver.getId());
+        assertThat(identity.getOnboardingStatus()).isEqualTo(MessagingIdentityOnboardingStatus.COMPLETED);
+        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Obrigado, João Martins", "registo foi concluído"));
         assertThat(bot.last()).contains("1/10 — Qual é o cliente?");
 
         process(3, 9001L, 7001L, "newuser", "/start");
 
         assertThat(drivers.findAll()).hasSize(1);
+        assertThat(messagingIdentities.findAll()).hasSize(1);
         assertThat(drivers.findByTelegramUserId(9001L).orElseThrow().getTelegramUsername()).isEqualTo("newuser");
+        assertThat(messagingIdentities.findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9001")
+                .orElseThrow().getExternalUsername()).isEqualTo("newuser");
         assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Vamos retomar"));
     }
 
@@ -143,6 +160,8 @@ class TelegramFlowIntegrationTest {
         assertThat(request.wheelQuantity(WheelType.WASHED)).isEqualTo(6);
         assertThat(request.wheelQuantity(WheelType.NORMAL)).isEqualTo(15);
         assertThat(request.getSource()).isEqualTo(RequestSource.TELEGRAM);
+        assertThat(request.getSubmittedByIdentity()).isNotNull();
+        assertThat(messagingIdentities.findById(request.getSubmittedByIdentity().getId()).orElseThrow().getExternalUserId()).isEqualTo("9101");
         assertThat(request.getFactoryDropoffSlot()).isEqualTo(FactoryTimeSlot.MORNING_09_14);
         assertThat(request.getFactoryPickupSlot()).isEqualTo(FactoryTimeSlot.MORNING_09_14);
         assertThat(request.getNotes()).isNull();
@@ -188,6 +207,26 @@ class TelegramFlowIntegrationTest {
     }
 
     @Test
+    void onboardingRejectsInvalidNameAcceptsPortugueseNameProfileCommandAndRejectsAnotherPersonsContact() {
+        process(50, 9501L, 7501L, null, "/start");
+        process(51, 9501L, 7501L, null, "A");
+        assertThat(bot.last()).contains("entre 2 e 120");
+
+        process(52, 9501L, 7501L, null, "  Maria d'Ávila-Santos  ");
+        DriverEntity driver = drivers.findByTelegramUserId(9501L).orElseThrow();
+        assertThat(driver.getName()).isEqualTo("Maria d'Ávila-Santos");
+
+        process(53, 9501L, 7501L, "changed_profile", "/perfil Maria João");
+        assertThat(drivers.findById(driver.getId()).orElseThrow().getName()).isEqualTo("Maria João");
+        assertThat(drivers.findById(driver.getId()).orElseThrow().getTelegramFirstName()).isEqualTo("Nome");
+
+        contact(54, 9501L, 7501L, 9999L, "+351 912 345 678");
+        assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("contacto de outra pessoa"));
+        assertThat(messagingIdentities.findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9501")
+                .orElseThrow().getPhoneNumber()).isNull();
+    }
+
+    @Test
     void webhookRejectsMissingOrInvalidSecretAndAcceptsConfiguredSecret() throws Exception {
         String payload = """
                 {"update_id": 400, "message": {"message_id": 1, "text": "/start",
@@ -215,7 +254,7 @@ class TelegramFlowIntegrationTest {
 
     private void registerDriver(Long telegramUserId, Long chatId) {
         process(1000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "/start");
-        process(2000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "Motorista " + telegramUserId);
+        process(2000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "Motorista Teste");
         bot.clear();
     }
 
@@ -232,6 +271,14 @@ class TelegramFlowIntegrationTest {
                         new TelegramMessage(updateId, new TelegramUser(telegramUserId, "driver", "Nome", "Apelido"),
                                 new TelegramChat(chatId, "private"), null),
                         data)));
+    }
+
+    private void contact(long updateId, Long telegramUserId, Long chatId, Long contactUserId, String phone) {
+        processor.process(new TelegramUpdate(updateId,
+                new TelegramMessage(updateId, new TelegramUser(telegramUserId, "driver", "Nome", "Apelido"),
+                        new TelegramChat(chatId, "private"), null,
+                        new TelegramContact(phone, "Outro", "Contacto", contactUserId)),
+                null));
     }
 
     private CustomerReferenceEntity customer(String externalId, String name) {

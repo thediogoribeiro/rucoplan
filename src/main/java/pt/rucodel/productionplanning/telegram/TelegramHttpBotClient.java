@@ -35,11 +35,26 @@ public class TelegramHttpBotClient implements TelegramBotClient {
         body.put("chat_id", chatId);
         body.put("text", text);
         if (inlineKeyboard != null && !inlineKeyboard.isEmpty()) {
-            body.put("reply_markup", Map.of("inline_keyboard", inlineKeyboard.stream()
-                    .map(row -> row.stream()
-                            .map(button -> Map.of("text", button.text(), "callback_data", button.callbackData()))
-                            .toList())
-                    .toList()));
+            boolean replyKeyboard = inlineKeyboard.stream().flatMap(List::stream).anyMatch(TelegramButton::requestContact);
+            if (replyKeyboard) {
+                body.put("reply_markup", Map.of(
+                        "keyboard", inlineKeyboard.stream()
+                                .map(row -> row.stream()
+                                        .map(button -> button.requestContact()
+                                                ? Map.<String, Object>of("text", button.text(), "request_contact", true)
+                                                : Map.<String, Object>of("text", button.text()))
+                                        .toList())
+                                .toList(),
+                        "resize_keyboard", true,
+                        "one_time_keyboard", true
+                ));
+            } else {
+                body.put("reply_markup", Map.of("inline_keyboard", inlineKeyboard.stream()
+                        .map(row -> row.stream()
+                                .map(button -> Map.of("text", button.text(), "callback_data", button.callbackData()))
+                                .toList())
+                        .toList()));
+            }
         }
         restClient.post()
                 .uri("/bot{token}/sendMessage", token)
