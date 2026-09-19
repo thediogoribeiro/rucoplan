@@ -56,6 +56,8 @@ class TelegramFlowIntegrationTest {
     @BeforeEach
     void setUp() {
         jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS customer_number_seq START WITH 1000 INCREMENT BY 1");
+        jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS driver_code_seq START WITH 1 INCREMENT BY 1");
+        jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS customer_code_seq START WITH 1 INCREMENT BY 1");
         bot.clear();
         customerCandidates.deleteAll();
         inboundUpdates.deleteAll();

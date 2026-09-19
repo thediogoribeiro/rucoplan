@@ -102,6 +102,7 @@ public class AdminMessagingIdentityService {
         OffsetDateTime lastRequestAt = driverRequests.isEmpty() ? null : driverRequests.getFirst().getCreatedAt();
         return new AdminDriverDetailResponse(
                 driver.getId(),
+                driver.getDriverCode(),
                 driver.getExternalId(),
                 driver.getName(),
                 driver.isActive(),
@@ -129,6 +130,7 @@ public class AdminMessagingIdentityService {
         return new MessagingIdentityResponse(
                 identity.getId(),
                 driver == null ? null : driver.getId(),
+                driver == null ? null : driver.getDriverCode(),
                 driver == null ? null : driver.getName(),
                 identity.getChannel(),
                 identity.getIntegrationKey(),

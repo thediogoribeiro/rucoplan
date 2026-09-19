@@ -17,6 +17,8 @@ import java.util.UUID;
 public interface WheelIntakeRequestRepository extends JpaRepository<WheelIntakeRequestEntity, UUID> {
     Optional<WheelIntakeRequestEntity> findByExternalMessageId(String externalMessageId);
 
+    boolean existsByRequestCode(String requestCode);
+
     Page<WheelIntakeRequestEntity> findByDriverId(UUID driverId, Pageable pageable);
 
     long countByDriverId(UUID driverId);

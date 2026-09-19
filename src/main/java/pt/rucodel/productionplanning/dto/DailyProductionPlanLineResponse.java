@@ -9,6 +9,7 @@ import java.util.UUID;
 public record DailyProductionPlanLineResponse(
         UUID id,
         UUID requestId,
+        String requestCode,
         UUID customerId,
         String customerName,
         String driverName,

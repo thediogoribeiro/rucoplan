@@ -26,16 +26,19 @@ public class DriverService {
     private final ApiMapper mapper;
     private final RecalculationService recalculationService;
     private final AdminMessagingIdentityService adminMessagingIdentities;
+    private final PublicCodeService publicCodes;
 
     public DriverService(DriverRepository drivers, ApplicationUserRepository users, PasswordEncoder passwordEncoder,
                          ApiMapper mapper, RecalculationService recalculationService,
-                         AdminMessagingIdentityService adminMessagingIdentities) {
+                         AdminMessagingIdentityService adminMessagingIdentities,
+                         PublicCodeService publicCodes) {
         this.drivers = drivers;
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.mapper = mapper;
         this.recalculationService = recalculationService;
         this.adminMessagingIdentities = adminMessagingIdentities;
+        this.publicCodes = publicCodes;
     }
 
     @Transactional(readOnly = true)
@@ -53,6 +56,7 @@ public class DriverService {
     public DriverResponse create(DriverRequest request, String actor) {
         DriverEntity driver = new DriverEntity();
         apply(driver, request);
+        driver.setDriverCode(publicCodes.driverCode(drivers.nextDriverCodeNumber()));
         driver.setCreatedBy(actor);
         driver.setUpdatedBy(actor);
         DriverEntity saved = drivers.save(driver);

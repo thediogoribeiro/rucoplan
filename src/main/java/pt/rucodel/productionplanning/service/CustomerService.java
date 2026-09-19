@@ -21,13 +21,15 @@ public class CustomerService {
     private final CustomerDirectoryPort customerDirectory;
     private final ApiMapper mapper;
     private final CustomerNameNormalizer normalizer;
+    private final PublicCodeService publicCodes;
 
     public CustomerService(CustomerReferenceRepository customers, CustomerDirectoryPort customerDirectory, ApiMapper mapper,
-                           CustomerNameNormalizer normalizer) {
+                           CustomerNameNormalizer normalizer, PublicCodeService publicCodes) {
         this.customers = customers;
         this.customerDirectory = customerDirectory;
         this.mapper = mapper;
         this.normalizer = normalizer;
+        this.publicCodes = publicCodes;
     }
 
     @Transactional(readOnly = true)
@@ -35,7 +37,7 @@ public class CustomerService {
         return customerDirectory.searchCustomers(query, limit).stream()
                 .map(customer -> customers.findById(customer.localId())
                         .map(mapper::toCustomer)
-                        .orElseGet(() -> new CustomerResponse(customer.localId(), null, customer.externalId(),
+                        .orElseGet(() -> new CustomerResponse(customer.localId(), null, null, customer.externalId(),
                                 null, null, customer.officialName(), null, null, null, null, true, 0)))
                 .toList();
     }
@@ -51,6 +53,9 @@ public class CustomerService {
         apply(entity, request);
         if (entity.getCustomerNumber() == null) {
             entity.setCustomerNumber(customers.nextCustomerNumber());
+        }
+        if (entity.getCustomerCode() == null) {
+            entity.setCustomerCode(publicCodes.customerCode(customers.nextCustomerCodeNumber()));
         }
         entity.setCreatedBy(actor);
         entity.setUpdatedBy(actor);

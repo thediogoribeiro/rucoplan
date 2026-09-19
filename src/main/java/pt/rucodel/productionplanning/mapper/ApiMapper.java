@@ -18,12 +18,14 @@ public class ApiMapper {
     }
 
     public DriverResponse toDriver(DriverEntity entity) {
-        return new DriverResponse(entity.getId(), entity.getExternalId(), entity.getName(), entity.isActive(), entity.getVersion());
+        return new DriverResponse(entity.getId(), entity.getDriverCode(), entity.getExternalId(),
+                entity.getName(), entity.isActive(), entity.getVersion());
     }
 
     public CustomerResponse toCustomer(CustomerReferenceEntity entity) {
         return new CustomerResponse(
                 entity.getId(),
+                entity.getCustomerCode(),
                 entity.getCustomerNumber(),
                 entity.getExternalId(),
                 entity.getExternalSystem(),
@@ -42,6 +44,7 @@ public class ApiMapper {
         Integer actual = entity.getActualReceivedWheelQuantity();
         return new RequestResponse(
                 entity.getId(),
+                entity.getRequestCode(),
                 entity.getSource(),
                 entity.getExternalSourceReference(),
                 entity.getExternalMessageId(),

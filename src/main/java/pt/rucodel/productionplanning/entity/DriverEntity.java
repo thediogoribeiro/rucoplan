@@ -15,6 +15,7 @@ import java.time.OffsetDateTime;
         name = "driver",
         indexes = {
                 @Index(name = "idx_driver_external_id", columnList = "external_id"),
+                @Index(name = "idx_driver_code", columnList = "driver_code"),
                 @Index(name = "idx_driver_active", columnList = "active"),
                 @Index(name = "idx_driver_telegram_user_id", columnList = "telegram_user_id")
         }
@@ -26,6 +27,9 @@ public class DriverEntity extends BaseEntity {
 
     @Column(name = "external_id", length = 120, unique = true)
     private String externalId;
+
+    @Column(name = "driver_code", length = 20, unique = true)
+    private String driverCode;
 
     @Column(name = "name", nullable = false)
     private String name;
@@ -79,6 +83,14 @@ public class DriverEntity extends BaseEntity {
 
     public void setExternalId(String externalId) {
         this.externalId = externalId;
+    }
+
+    public String getDriverCode() {
+        return driverCode;
+    }
+
+    public void setDriverCode(String driverCode) {
+        this.driverCode = driverCode;
     }
 
     public String getName() {

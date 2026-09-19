@@ -15,10 +15,13 @@ import java.time.OffsetDateTime;
 public class DriverRegistrationService {
     private final DriverRepository drivers;
     private final MessagingIdentityService identities;
+    private final PublicCodeService publicCodes;
 
-    public DriverRegistrationService(DriverRepository drivers, MessagingIdentityService identities) {
+    public DriverRegistrationService(DriverRepository drivers, MessagingIdentityService identities,
+                                     PublicCodeService publicCodes) {
         this.drivers = drivers;
         this.identities = identities;
+        this.publicCodes = publicCodes;
     }
 
     @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = InvalidRequestException.class)
@@ -28,6 +31,7 @@ public class DriverRegistrationService {
         }
         String name = validateAndNormalizeName(rawName);
         DriverEntity driver = new DriverEntity();
+        driver.setDriverCode(publicCodes.driverCode(drivers.nextDriverCodeNumber()));
         driver.setName(name);
         driver.setActive(true);
         driver.setCreatedBy("TELEGRAM");

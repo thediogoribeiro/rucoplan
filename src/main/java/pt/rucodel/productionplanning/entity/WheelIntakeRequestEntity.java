@@ -21,6 +21,7 @@ import java.util.UUID;
                 @Index(name = "idx_wheel_request_pickup_start", columnList = "requested_factory_pickup_start"),
                 @Index(name = "idx_wheel_request_dropoff_end", columnList = "expected_factory_dropoff_end"),
                 @Index(name = "idx_wheel_request_status", columnList = "lifecycle_status"),
+                @Index(name = "idx_wheel_request_code", columnList = "request_code"),
                 @Index(name = "idx_wheel_request_external_message", columnList = "external_message_id"),
                 @Index(name = "idx_wheel_request_submitted_identity", columnList = "submitted_by_identity_id")
         }
@@ -36,6 +37,9 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     @Column(name = "external_source_reference", length = 160)
     private String externalSourceReference;
+
+    @Column(name = "request_code", length = 15, unique = true)
+    private String requestCode;
 
     @Column(name = "external_message_id", unique = true, length = 180)
     private String externalMessageId;
@@ -162,6 +166,14 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     public void setExternalSourceReference(String externalSourceReference) {
         this.externalSourceReference = externalSourceReference;
+    }
+
+    public String getRequestCode() {
+        return requestCode;
+    }
+
+    public void setRequestCode(String requestCode) {
+        this.requestCode = requestCode;
     }
 
     public String getExternalMessageId() {

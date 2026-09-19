@@ -91,6 +91,9 @@ public class DevSeedDataConfig {
     private DriverEntity driver(String externalId, String name) {
         DriverEntity entity = new DriverEntity();
         entity.setExternalId(externalId);
+        if (externalId != null && externalId.matches("D[0-9]+")) {
+            entity.setDriverCode("MOTOR-" + String.format("%03d", Integer.parseInt(externalId.substring(1))));
+        }
         entity.setName(name);
         entity.setActive(true);
         entity.setCreatedBy("DEV_SEED");
@@ -122,6 +125,7 @@ public class DevSeedDataConfig {
         entity.setExternalId(externalId);
         if (externalId != null && externalId.matches("C[0-9]+")) {
             entity.setCustomerNumber(Integer.parseInt(externalId.substring(1)));
+            entity.setCustomerCode("CLI-" + String.format("%03d", Integer.parseInt(externalId.substring(1))));
         }
         entity.setName(name);
         entity.setActive(true);

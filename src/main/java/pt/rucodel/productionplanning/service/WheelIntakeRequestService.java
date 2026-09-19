@@ -49,12 +49,14 @@ public class WheelIntakeRequestService {
     private final ApplicationEventPublisher eventPublisher;
     private final CapacityAlertService capacityAlertService;
     private final WheelQuantityService wheelQuantityService;
+    private final PublicCodeService publicCodes;
 
     public WheelIntakeRequestService(WheelIntakeRequestRepository requests, CustomerReferenceRepository customers,
                                      DriverRepository drivers, RequestStatusHistoryRepository statusHistory,
                                      ApiMapper mapper, Clock clock, RecalculationService recalculationService,
                                      AuditService auditService, ApplicationEventPublisher eventPublisher,
-                                     CapacityAlertService capacityAlertService, WheelQuantityService wheelQuantityService) {
+                                     CapacityAlertService capacityAlertService, WheelQuantityService wheelQuantityService,
+                                     PublicCodeService publicCodes) {
         this.requests = requests;
         this.customers = customers;
         this.drivers = drivers;
@@ -66,6 +68,7 @@ public class WheelIntakeRequestService {
         this.eventPublisher = eventPublisher;
         this.capacityAlertService = capacityAlertService;
         this.wheelQuantityService = wheelQuantityService;
+        this.publicCodes = publicCodes;
     }
 
     @Transactional
@@ -416,6 +419,7 @@ public class WheelIntakeRequestService {
             throw new InvalidRequestException("Customer is required.");
         }
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
+        entity.setRequestCode(publicCodes.newRequestCode());
         entity.setSource(source);
         entity.setExternalSourceReference(externalSourceReference);
         entity.setExternalMessageId(blankToNull(externalMessageId));

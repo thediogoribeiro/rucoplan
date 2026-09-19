@@ -70,8 +70,6 @@ public class ProductionPlanningAdminController {
     @PostMapping("/planning-targets")
     public PlanningTargetResponse createTarget(@Valid @RequestBody PlanningTargetRequest request) {
         var user = currentUserService.requireUser();
-        PlanningTargetResponse saved = targets.create(request, user.actorLabel());
-        productionPlanning.recalculate(request.effectiveFrom(), GenerationTrigger.AUTOMATIC_RECALCULATION, user);
-        return saved;
+        return targets.create(request, user.actorLabel());
     }
 }

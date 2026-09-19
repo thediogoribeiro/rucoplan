@@ -6,6 +6,7 @@ import java.util.UUID;
 
 public record AdminDriverDetailResponse(
         UUID id,
+        String driverCode,
         String externalId,
         String name,
         boolean active,

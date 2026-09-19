@@ -25,19 +25,22 @@ public class CustomerRegistrationRequestService {
     private final CustomerNameNormalizer normalizer;
     private final AuditService auditService;
     private final Clock clock;
+    private final PublicCodeService publicCodes;
 
     public CustomerRegistrationRequestService(CustomerRegistrationRequestRepository registrations,
                                               CustomerReferenceRepository customers,
                                               WheelIntakeRequestRepository requests,
                                               CustomerNameNormalizer normalizer,
                                               AuditService auditService,
-                                              Clock clock) {
+                                              Clock clock,
+                                              PublicCodeService publicCodes) {
         this.registrations = registrations;
         this.customers = customers;
         this.requests = requests;
         this.normalizer = normalizer;
         this.auditService = auditService;
         this.clock = clock;
+        this.publicCodes = publicCodes;
     }
 
     @Transactional
@@ -172,6 +175,7 @@ public class CustomerRegistrationRequestService {
             return existingNumber;
         }
         CustomerReferenceEntity customer = new CustomerReferenceEntity();
+        customer.setCustomerCode(publicCodes.customerCode(customers.nextCustomerCodeNumber()));
         customer.setCustomerNumber(registration.getReservedCustomerNumber());
         customer.setName(registration.getProposedName());
         customer.setNormalizedName(registration.getNormalizedName());

@@ -4,6 +4,7 @@ import java.util.UUID;
 
 public record CustomerResponse(
         UUID id,
+        String customerCode,
         Integer customerNumber,
         String externalId,
         String externalSystem,

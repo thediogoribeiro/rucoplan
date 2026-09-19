@@ -100,6 +100,19 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
 }
 
+function fullDate(value) {
+  if (!value) return '-';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-PT', {
+    timeZone: 'Europe/Lisbon',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  }).format(date);
+}
+
 function toOffsetDateTime(datetimeLocal) {
   if (!datetimeLocal) return null;
   const date = new Date(datetimeLocal);
@@ -175,4 +188,4 @@ function hideMessage(element) {
 }
 
 window.api = api;
-window.pp = { escapeHtml, formatDateTime, formatDate, toOffsetDateTime, todayString, tomorrowString, addDays, datetimeLocalValue, badge, showMessage, hideMessage };
+window.pp = { escapeHtml, formatDateTime, formatDate, fullDate, toOffsetDateTime, todayString, tomorrowString, addDays, datetimeLocalValue, badge, showMessage, hideMessage };

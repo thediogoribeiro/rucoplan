@@ -21,6 +21,7 @@ import java.util.UUID;
         name = "customer_reference",
         indexes = {
                 @Index(name = "idx_customer_reference_external_id", columnList = "external_id"),
+                @Index(name = "idx_customer_reference_customer_code", columnList = "customer_code"),
                 @Index(name = "idx_customer_reference_customer_number", columnList = "customer_number"),
                 @Index(name = "idx_customer_reference_name", columnList = "name"),
                 @Index(name = "idx_customer_reference_normalized_name", columnList = "normalized_name"),
@@ -34,6 +35,9 @@ public class CustomerReferenceEntity extends BaseEntity {
 
     @Column(name = "external_id", length = 120, unique = true)
     private String externalId;
+
+    @Column(name = "customer_code", length = 20, unique = true)
+    private String customerCode;
 
     @Column(name = "customer_number", unique = true)
     private Integer customerNumber;
@@ -112,6 +116,14 @@ public class CustomerReferenceEntity extends BaseEntity {
 
     public void setExternalId(String externalId) {
         this.externalId = externalId;
+    }
+
+    public String getCustomerCode() {
+        return customerCode;
+    }
+
+    public void setCustomerCode(String customerCode) {
+        this.customerCode = customerCode;
     }
 
     public Integer getCustomerNumber() {

@@ -27,6 +27,9 @@ public interface CustomerReferenceRepository extends JpaRepository<CustomerRefer
     @Query(value = "select nextval('customer_number_seq')", nativeQuery = true)
     Integer nextCustomerNumber();
 
+    @Query(value = "select nextval('customer_code_seq')", nativeQuery = true)
+    Integer nextCustomerCodeNumber();
+
     @Query("""
             select c from CustomerReferenceEntity c
             where c.active = true

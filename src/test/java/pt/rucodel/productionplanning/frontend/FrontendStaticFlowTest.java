@@ -35,7 +35,9 @@ class FrontendStaticFlowTest {
         String print = Files.readString(STATIC.resolve("js/print-plan.js"));
 
         assertThat(adminHtml).contains("Planeamento de Produção", "Fecho do turno", "Targets", "Plano diário", "Capacidade");
-        assertThat(admin).contains("/api/v1/admin/settings/daily");
+        assertThat(adminHtml).contains("nav-disabled", "Em construção");
+        assertThat(adminHtml.indexOf("Auditoria")).isLessThan(adminHtml.indexOf("Targets"));
+        assertThat(admin).contains("Capacidade está temporariamente em construção");
         assertThat(admin).contains("/api/v1/admin/messaging-identities");
         assertThat(admin).contains("/api/v1/admin/customer-registration-requests");
         assertThat(admin).contains("Identidades Telegram e canais de comunicação");
@@ -47,15 +49,21 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("Target máximo diário — capacidade regular");
         assertThat(admin).contains("Marcar tudo como concluído");
         assertThat(admin).contains("Tipos de jantes");
-        assertThat(admin).contains("Concluído por tipo");
-        assertThat(admin).contains("Pendente por tipo");
+        assertThat(admin).contains("closure-card", "closure-type-table");
+        assertThat(admin).contains("Concluído");
+        assertThat(admin).contains("Pendente");
         assertThat(admin).contains("Aviso de fecho pendente");
         assertThat(admin).contains("Horas extra");
+        assertThat(admin).contains("Excesso estimado");
         assertThat(admin).contains("Dia anterior", "Amanhã", "Dia seguinte");
+        assertThat(admin).contains("Existem targets mais recentes");
         assertThat(admin).contains("remainingQuantity");
         assertThat(admin).contains("/api/v1/admin/requests");
-        assertThat(admin).contains("/api/v1/admin/plans/generate");
+        assertThat(admin).contains("/api/v1/admin/production-plans/${state.date}/recalculate");
         assertThat(admin).contains("/api/v1/admin/dashboard/stream");
+        assertThat(admin).contains("requestCode", "driverCode", "customerCode", "ID RucoFi");
+        assertThat(admin).contains("wheelSummaryVertical", "factoryWindow");
+        assertThat(admin).doesNotContain("Reconhecer");
         assertThat(admin).contains("OVER_CAPACITY");
         assertThat(admin).contains("AT_RISK");
         assertThat(admin).contains("actualReceivedWheelQuantity");

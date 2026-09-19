@@ -82,6 +82,29 @@ class MultiDayPlanningIntegrationTest {
     }
 
     @Test
+    void savingTargetsDoesNotRecalculateAndManualRecalculationUsesLatestTargets() {
+        createTargets(10, 20, day);
+        request(customerX, 20, day, day, RequestSource.WEB);
+
+        DailyProductionPlanResponse initial = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+
+        assertThat(initial.minimumDailyTarget()).isEqualTo(10);
+        assertThat(initial.regularDailyCapacity()).isEqualTo(20);
+        assertThat(initial.overtimeQuantity()).isZero();
+
+        createTargets(5, 7, day);
+
+        DailyProductionPlanResponse stillSnapshot = plan(day);
+        assertThat(stillSnapshot.minimumDailyTarget()).isEqualTo(10);
+        assertThat(stillSnapshot.regularDailyCapacity()).isEqualTo(20);
+
+        DailyProductionPlanResponse recalculated = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+        assertThat(recalculated.minimumDailyTarget()).isEqualTo(5);
+        assertThat(recalculated.regularDailyCapacity()).isEqualTo(7);
+        assertThat(recalculated.overtimeQuantity()).isEqualTo(13);
+    }
+
+    @Test
     void urgentWorkPendingWorkAvailabilityMinimumAndBalancedDistributionAreHandled() {
         createTargets(100, 200, day);
         request(customerX, 450, day, day.plusDays(2), RequestSource.WEB);

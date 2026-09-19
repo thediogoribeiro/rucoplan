@@ -14,11 +14,9 @@ import java.util.List;
 @Service
 public class ProductionTargetService {
     private final ProductionTargetConfigurationRepository targets;
-    private final CapacityAlertService capacityAlertService;
 
-    public ProductionTargetService(ProductionTargetConfigurationRepository targets, CapacityAlertService capacityAlertService) {
+    public ProductionTargetService(ProductionTargetConfigurationRepository targets) {
         this.targets = targets;
-        this.capacityAlertService = capacityAlertService;
     }
 
     @Transactional(readOnly = true)
@@ -50,7 +48,6 @@ public class ProductionTargetService {
         entity.setEffectiveFrom(request.effectiveFrom());
         entity.setCreatedBy(actor);
         ProductionTargetConfigurationEntity saved = targets.saveAndFlush(entity);
-        capacityAlertService.recalculate(request.effectiveFrom());
         return toResponse(saved);
     }
 

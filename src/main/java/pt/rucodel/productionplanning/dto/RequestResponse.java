@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public record RequestResponse(
         UUID id,
+        String requestCode,
         RequestSource source,
         String externalSourceReference,
         String externalMessageId,

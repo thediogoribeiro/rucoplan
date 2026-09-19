@@ -9,6 +9,7 @@ import java.util.UUID;
 public record MessagingIdentityResponse(
         UUID id,
         UUID driverId,
+        String driverCode,
         String driverName,
         MessagingChannel channel,
         String integrationKey,

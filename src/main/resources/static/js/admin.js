@@ -13,6 +13,7 @@ const state = {
   requests: [],
   audit: [],
   capacityAlerts: [],
+  busy: {},
   stream: null,
   fallbackTimer: null,
   filters: {
@@ -60,7 +61,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadAdminData() {
   const from = pp.addDays(state.date, -2);
   const to = pp.addDays(state.date, 7);
-  const [dashboard, productionPlan, productionPlans, planningTargets, settings, drivers, messagingIdentities, customerRegistrationRequests, customers, requests, audit, capacityAlerts] = await Promise.all([
+  const [dashboard, productionPlan, productionPlans, planningTargets, settings, drivers, messagingIdentities, customerRegistrationRequests, customers, requests, audit] = await Promise.all([
     api.get(`/api/v1/admin/dashboard?date=${state.date}`),
     api.get(`/api/v1/admin/production-plans/${state.date}`),
     api.get(`/api/v1/admin/production-plans?from=${from}&to=${to}`),
@@ -71,8 +72,7 @@ async function loadAdminData() {
     api.get('/api/v1/admin/customer-registration-requests'),
     api.get('/api/v1/admin/customers'),
     api.get('/api/v1/admin/requests?size=200'),
-    api.get('/api/v1/admin/audit?size=50'),
-    api.get('/api/v1/admin/capacity-alerts')
+    api.get('/api/v1/admin/audit?size=50')
   ]);
   state.dashboard = dashboard;
   state.productionPlan = productionPlan;
@@ -85,7 +85,7 @@ async function loadAdminData() {
   state.customers = customers;
   state.requests = requests.content || [];
   state.audit = audit.content || [];
-  state.capacityAlerts = capacityAlerts || [];
+  state.capacityAlerts = [];
 }
 
 function render() {
@@ -106,18 +106,20 @@ function renderProductionPlanning() {
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
       <div class="section-header">
-        <h2>Planeamento de Produção</h2>
+        <div>
+          <h2>${plan ? pp.fullDate(plan.planningDate) : 'Planeamento de Produção'} ${plan ? pp.badge(plan.status) : ''}</h2>
+          ${targetsOutdated(plan) ? '<p class="muted">Existem targets mais recentes. Clique em Recalcular para atualizar o plano.</p>' : ''}
+        </div>
         <div class="actions">
           <button type="button" class="secondary" data-date-nav="-1">Dia anterior</button>
           <button type="button" class="secondary" data-date-set="${pp.todayString()}">Hoje</button>
           <button type="button" class="secondary" data-date-set="${pp.tomorrowString()}">Amanhã</button>
           <button type="button" class="secondary" data-date-nav="1">Dia seguinte</button>
-          <button id="planning-recalculate" type="button">Recalcular</button>
+          <button id="planning-recalculate" type="button" ${state.busy.recalculate ? 'disabled' : ''}>${state.busy.recalculate ? 'A recalcular...' : 'Recalcular'}</button>
         </div>
       </div>
       ${plan ? dailyHeader(plan) : '<p class="muted">Sem plano para a data selecionada.</p>'}
     </section>
-    ${capacityAlertBanner()}
     <section class="panel">
       <div class="section-header"><h2>Trabalho por cliente e pedido</h2></div>
       ${productionPlanTable(lines)}
@@ -130,24 +132,34 @@ function renderProductionPlanning() {
 }
 
 function dailyHeader(plan) {
-  return `<section class="metric-grid">
-    ${metric('Data', pp.formatDate(plan.planningDate))}
-    ${metric('Estado do plano', plan.status)}
+  return `<section class="metric-grid metric-grid-primary">
     ${metric('Total planeado', `${plan.totalPlanned} jantes`)}
-    ${metric('Tipos planeados', wheelSummary(plan.wheelQuantities))}
+    ${metric('Bipartidas', quantityValue(plan.wheelQuantities, 'BIPARTITE'))}
+    ${metric('Lavadas', quantityValue(plan.wheelQuantities, 'WASHED'))}
+    ${metric('Normais', quantityValue(plan.wheelQuantities, 'NORMAL'))}
     ${metric('Total concluído', plan.totalCompleted)}
-    ${metric('Total pendente', plan.totalRemaining)}
+    ${overtimeMetric(plan)}
+  </section>
+  <section class="metric-grid metric-grid-secondary">
     ${metric('Target mínimo diário', plan.minimumDailyTarget)}
     ${metric('Target máximo diário — capacidade regular', plan.regularDailyCapacity)}
-    ${metric('Diferença para o mínimo', plan.differenceToMinimum)}
-    ${metric('Excesso acima do máximo', plan.overtimeQuantity)}
-    ${metric('Pendente de dias anteriores', plan.carriedOverQuantity)}
+    ${metric('Trabalho transportado', plan.carriedOverQuantity)}
     ${metric('Antecipado de dias futuros', plan.advancedQuantity)}
-    ${metric('Em risco', plan.atRiskQuantity)}
-    ${metric('Horas extra', plan.overtimeRequired ? 'Necessárias' : 'Não')}
+    ${metric('Quantidade em risco', plan.atRiskQuantity)}
+    ${metric('Diferença', plan.differenceToMinimum)}
     ${metric('Última atualização', pp.formatDateTime(plan.generatedAt))}
   </section>
   ${plan.warning ? `<p class="message ${plan.overtimeRequired ? 'error' : 'warning'}">${pp.escapeHtml(plan.warning)}</p>` : ''}`;
+}
+
+function overtimeMetric(plan) {
+  const label = plan.overtimeRequired ? 'SIM' : 'NÃO';
+  const detail = plan.overtimeRequired ? `Excesso estimado: ${plan.overtimeQuantity} jantes` : 'Dentro do target máximo';
+  return `<div class="metric overtime ${plan.overtimeRequired ? 'yes' : 'no'}">
+    <span>Horas extra</span>
+    <strong>${label}</strong>
+    <small>${pp.escapeHtml(detail)}</small>
+  </div>`;
 }
 
 function productionPlanTable(lines) {
@@ -162,16 +174,16 @@ function productionPlanTable(lines) {
       <thead><tr><th>Ordem</th><th>Pedido</th><th>Motorista</th><th>Total pedido</th><th>Tipos de jantes</th><th>Planeado</th><th>Concluído</th><th>Restante</th><th>Entrada fábrica</th><th>Prazo</th><th>Levantamento</th><th>Notas</th><th>Origem</th><th>Indicações</th><th>Estado</th></tr></thead>
       <tbody>${customerLines.map(line => `<tr>
         <td>${line.priorityOrder}</td>
-        <td>${line.requestId}</td>
+        <td><span class="code-pill">${pp.escapeHtml(line.requestCode || '-')}</span></td>
         <td>${pp.escapeHtml(line.driverName)}</td>
         <td>${line.requestTotalQuantity}</td>
-        <td>${wheelSummary(line.wheelQuantities)}</td>
+        <td>${wheelSummaryVertical(line.wheelQuantities)}</td>
         <td>${line.plannedQuantity}</td>
         <td>${line.completedQuantity}</td>
         <td>${line.remainingQuantity}</td>
-        <td>${pp.formatDateTime(line.factoryDropoffStart)} a ${pp.formatDateTime(line.factoryDropoffEnd)}</td>
+        <td>${factoryWindow(line.factoryDropoffStart, line.factoryDropoffEnd)}</td>
         <td>${pp.formatDateTime(line.deadlineAt)}</td>
-        <td>${pp.formatDateTime(line.factoryPickupStart)} a ${pp.formatDateTime(line.factoryPickupEnd)}</td>
+        <td>${factoryWindow(line.factoryPickupStart, line.factoryPickupEnd)}</td>
         <td>${pp.escapeHtml(line.notes || '-')}</td>
         <td>${line.source === 'TELEGRAM' ? 'Telegram' : 'Aplicação'}</td>
         <td>${line.carriedOver ? pp.badge('CARRIED_OVER') : ''} ${line.advancedFromFuture ? pp.badge('ADVANCED') : ''}</td>
@@ -204,8 +216,14 @@ function bindPlanningNavigation() {
     render();
   }));
   document.querySelector('#planning-recalculate')?.addEventListener('click', async () => {
-    await api.postJson(`/api/v1/admin/production-plans/${state.date}/recalculate`, {});
-    await loadAdminData();
+    state.busy.recalculate = true;
+    renderProductionPlanning();
+    try {
+      state.productionPlan = await api.postJson(`/api/v1/admin/production-plans/${state.date}/recalculate`, {});
+      state.productionPlans = await api.get(`/api/v1/admin/production-plans?from=${pp.addDays(state.date, -2)}&to=${pp.addDays(state.date, 7)}`) || [];
+    } finally {
+      state.busy.recalculate = false;
+    }
     render();
   });
 }
@@ -225,7 +243,7 @@ function renderTargets() {
         <label>Data de entrada em vigor
           <input name="effectiveFrom" type="date" value="${state.date}" required>
         </label>
-        <button type="submit">Guardar targets</button>
+        <button type="submit" ${state.busy.targets ? 'disabled' : ''}>${state.busy.targets ? 'A guardar...' : 'Guardar targets'}</button>
         <p id="targets-message" class="message hidden wide" role="alert"></p>
       </form>
     </section>
@@ -249,6 +267,7 @@ async function saveTargets(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const message = document.querySelector('#targets-message');
+  const submit = form.querySelector('button[type="submit"]');
   pp.hideMessage(message);
   const minimumDailyTarget = Number(form.minimumDailyTarget.value);
   const regularDailyCapacity = Number(form.regularDailyCapacity.value);
@@ -257,15 +276,24 @@ async function saveTargets(event) {
     return;
   }
   try {
+    state.busy.targets = true;
+    submit.disabled = true;
+    submit.textContent = 'A guardar...';
     await api.postJson('/api/v1/admin/planning-targets', {
       minimumDailyTarget,
       regularDailyCapacity,
       effectiveFrom: form.effectiveFrom.value
     });
     await loadAdminData();
+    state.busy.targets = false;
     renderTargets();
+    pp.showMessage(document.querySelector('#targets-message'), 'Targets guardados. O planeamento será atualizado quando clicar em Recalcular.', 'success');
   } catch (error) {
     pp.showMessage(message, error.message || 'Não foi possível guardar os targets.');
+  } finally {
+    state.busy.targets = false;
+    submit.disabled = false;
+    submit.textContent = 'Guardar targets';
   }
 }
 
@@ -276,30 +304,53 @@ function renderShiftClosure() {
     <section class="panel">
       <div class="section-header">
         <h2>Fecho do turno</h2>
-        <button id="mark-all-complete" type="button" class="secondary">Marcar tudo como concluído</button>
+        <button id="mark-all-complete" type="button" class="secondary" ${state.busy.markAll ? 'disabled' : ''}>Marcar tudo como concluído</button>
       </div>
       ${plan?.warning?.includes('fecho do turno anterior pendente') ? `<p class="message warning">Aviso de fecho pendente: valide o dia anterior para tornar o plano definitivo.</p>` : ''}
       <form id="closure-form">
-        <div class="table-wrap"><table>
-          <thead><tr><th>Cliente</th><th>Pedido</th><th>Planeado</th><th>Concluído por tipo</th><th>Pendente por tipo</th><th>Notas operacionais</th></tr></thead>
-          <tbody>${lines.map(line => `<tr data-closure-line>
-            <td>${pp.escapeHtml(line.customerName)}</td>
-            <td>${line.requestId}<input type="hidden" data-line-id value="${line.id}"><input type="hidden" data-line-version value="${line.version}"></td>
-            <td data-planned="${line.plannedQuantity}">Total: ${line.plannedQuantity}<br>${wheelSummary(line.wheelQuantities)}</td>
-            <td>${typeClosureInputs(line, 'completed')}</td>
-            <td>${typeClosureInputs(line, 'remaining')}</td>
-            <td><input data-notes value="${pp.escapeHtml(line.operationalNotes || '')}"></td>
-          </tr>`).join('')}</tbody>
-        </table></div>
+        <div class="closure-summary" id="closure-summary"></div>
+        <div class="closure-cards">${lines.map(closureCard).join('')}</div>
         <input name="planVersion" type="hidden" value="${plan?.version || 0}">
         <div class="actions" style="margin-top:12px">
-          <button id="save-reconciliation" type="button" class="secondary">Guardar rascunho</button>
-          <button type="submit">Validar e fechar turno</button>
+          <button id="save-reconciliation" type="button" class="secondary" ${state.busy.closure ? 'disabled' : ''}>${state.busy.closure ? 'A guardar...' : 'Guardar rascunho'}</button>
+          <button type="submit" ${state.busy.closure ? 'disabled' : ''}>${state.busy.closure ? 'A fechar...' : 'Validar e fechar turno'}</button>
         </div>
         <p id="closure-message" class="message hidden" role="alert"></p>
       </form>
     </section>`;
   bindClosureForm();
+  document.querySelectorAll('[data-closure-line]').forEach(validateClosureRow);
+  updateClosureTotals();
+}
+
+function closureCard(line) {
+  return `<article class="closure-card" data-closure-line>
+    <section class="closure-info">
+      <input type="hidden" data-line-id value="${line.id}">
+      <input type="hidden" data-line-version value="${line.version}">
+      ${infoRow('Cliente', line.customerName)}
+      ${infoRow('Pedido', line.requestCode || '-')}
+      ${infoRow('Total planeado', line.plannedQuantity)}
+      ${infoRow('Bipartidas', quantityValue(line.wheelQuantities, 'BIPARTITE'))}
+      ${infoRow('Lavadas', quantityValue(line.wheelQuantities, 'WASHED'))}
+      ${infoRow('Normais', quantityValue(line.wheelQuantities, 'NORMAL'))}
+      ${infoRow('Prazo', pp.formatDateTime(line.deadlineAt))}
+      ${infoRow('Estado', line.status)}
+    </section>
+    <section class="closure-edit">
+      <table class="closure-type-table">
+        <thead><tr><th>Tipo</th><th>Planeado</th><th>Concluído</th><th>Pendente</th></tr></thead>
+        <tbody>${typeClosureRows(line)}</tbody>
+        <tfoot><tr><th>Total</th><th data-row-planned>${line.plannedQuantity}</th><th data-row-completed>0</th><th data-row-remaining>0</th></tr></tfoot>
+      </table>
+      <label>Notas operacionais<input data-notes value="${pp.escapeHtml(line.operationalNotes || '')}"></label>
+      <p class="message error hidden" data-line-error></p>
+    </section>
+  </article>`;
+}
+
+function infoRow(label, value) {
+  return `<div class="info-row"><span>${pp.escapeHtml(label)}</span><strong>${pp.escapeHtml(value)}</strong></div>`;
 }
 
 function bindClosureForm() {
@@ -307,7 +358,9 @@ function bindClosureForm() {
     document.querySelectorAll('[data-closure-line]').forEach(row => {
       row.querySelectorAll('[data-type-completed]').forEach(input => input.value = input.dataset.typePlanned);
       row.querySelectorAll('[data-type-remaining]').forEach(input => input.value = 0);
+      validateClosureRow(row);
     });
+    updateClosureTotals();
   });
   document.querySelectorAll('[data-type-completed]').forEach(input => input.addEventListener('input', syncTypeRemaining));
   document.querySelectorAll('[data-type-remaining]').forEach(input => input.addEventListener('input', syncTypeCompleted));
@@ -323,6 +376,8 @@ function syncTypeRemaining(event) {
   const row = input.closest('[data-closure-line]');
   const target = row.querySelector(`[data-type-remaining][data-type="${input.dataset.type}"]`);
   target.value = Math.max(Number(input.dataset.typePlanned) - Number(input.value || 0), 0);
+  validateClosureRow(row);
+  updateClosureTotals();
 }
 
 function syncTypeCompleted(event) {
@@ -330,18 +385,31 @@ function syncTypeCompleted(event) {
   const row = input.closest('[data-closure-line]');
   const target = row.querySelector(`[data-type-completed][data-type="${input.dataset.type}"]`);
   target.value = Math.max(Number(input.dataset.typePlanned) - Number(input.value || 0), 0);
+  validateClosureRow(row);
+  updateClosureTotals();
 }
 
 async function submitClosure(close) {
   const message = document.querySelector('#closure-message');
   pp.hideMessage(message);
   try {
+    const invalid = [...document.querySelectorAll('[data-closure-line]')].some(row => !validateClosureRow(row));
+    if (invalid) {
+      pp.showMessage(message, 'Corrija as quantidades antes de fechar o turno.');
+      return;
+    }
+    state.busy.closure = true;
+    document.querySelectorAll('#closure-form button').forEach(button => button.disabled = true);
     const payload = reconciliationPayload();
-    await api[close ? 'postJson' : 'putJson'](`/api/v1/admin/production-plans/${state.date}/${close ? 'close' : 'reconciliation'}`, payload);
+    state.productionPlan = await api[close ? 'postJson' : 'putJson'](`/api/v1/admin/production-plans/${state.date}/${close ? 'close' : 'reconciliation'}`, payload);
     await loadAdminData();
     renderShiftClosure();
+    pp.showMessage(document.querySelector('#closure-message'), close ? 'Turno fechado com sucesso.' : 'Rascunho guardado com sucesso.', 'success');
   } catch (error) {
     pp.showMessage(message, error.message || 'Não foi possível guardar o fecho.');
+  } finally {
+    state.busy.closure = false;
+    document.querySelectorAll('#closure-form button').forEach(button => button.disabled = false);
   }
 }
 
@@ -410,8 +478,8 @@ function renderDashboard() {
       <div class="list-stack">${d.futureWorkload.length ? d.futureWorkload.map(arrivalItem).join('') : '<p class="muted">Sem carga futura registada.</p>'}</div>
     </section>
     <section class="panel">
-      <div class="section-header"><h2>Definições diárias</h2><a class="button secondary" href="#settings">Editar</a></div>
-      <p>Capacidade ${d.dailyCapacity} · objetivo ${d.dailyTarget}</p>
+      <div class="section-header"><h2>Capacidade</h2><span class="status">Em construção</span></div>
+      <p class="muted">Capacidade está temporariamente em construção e não influencia o planeamento atual.</p>
     </section>
   `;
   bindDashboardActions();
@@ -426,15 +494,7 @@ function renderDashboard() {
 }
 
 function capacityAlertBanner() {
-  const active = state.capacityAlerts.filter(alert => alert.status === 'ACTIVE' || alert.status === 'ACKNOWLEDGED');
-  if (!active.length) return '';
-  return `<section class="panel">
-    <div class="section-header"><h2>Alertas de capacidade</h2></div>
-    <div class="list-stack">${active.map(alert => `
-      <p class="message warning">${pp.escapeHtml(alert.message)} Estimativa baseada na capacidade configurada.
-      ${alert.status === 'ACTIVE' ? `<button type="button" class="secondary" data-alert-ack="${alert.id}">Reconhecer</button>` : ''}</p>
-    `).join('')}</div>
-  </section>`;
+  return '';
 }
 
 function filters() {
@@ -530,12 +590,24 @@ async function acknowledgeAlert(id) {
 }
 
 async function regeneratePlan() {
+  state.busy.regenerate = true;
+  const button = document.querySelector('#regenerate-button');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'A gerar...';
+  }
   try {
-    await api.postJson(`/api/v1/admin/plans/generate?date=${state.date}`, {});
+    state.productionPlan = await api.postJson(`/api/v1/admin/production-plans/${state.date}/recalculate`, {});
     await loadAdminData();
     render();
   } catch (error) {
     alert(error.message || 'Não foi possível gerar o plano.');
+  } finally {
+    state.busy.regenerate = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Gerar plano';
+    }
   }
 }
 
@@ -591,51 +663,31 @@ function renderRequests() {
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
       <div class="section-header"><h2>Pedidos registados</h2></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Cliente</th><th>Motorista</th><th>Total</th><th>Tipos de jantes</th><th>Deixar na fábrica</th><th>Levantar na fábrica</th><th>Estado</th><th>Diferença</th></tr></thead>
+      <div class="table-wrap"><table class="requests-table">
+        <thead><tr><th>Pedido</th><th>Cliente</th><th>Motorista</th><th>Tipos de jantes</th><th>Deixar na fábrica</th><th>Levantar na fábrica</th><th>Estado</th><th>Diferença</th><th>Ações</th></tr></thead>
         <tbody>${state.requests.map(request => `<tr>
+          <td><span class="code-pill">${pp.escapeHtml(request.requestCode || '-')}</span></td>
           <td>${pp.escapeHtml(request.customerNameSnapshot)}</td>
           <td>${pp.escapeHtml(request.driverName)}</td>
-          <td>${request.actualReceivedWheelQuantity || request.totalQuantity || request.expectedWheelQuantity}</td>
-          <td>${wheelSummary(request.wheelQuantities)}</td>
-          <td>${pp.formatDateTime(request.expectedFactoryDropOffWindowStart)} a ${pp.formatDateTime(request.expectedFactoryDropOffWindowEnd)}</td>
-          <td>${pp.formatDateTime(request.requestedFactoryPickupWindowStart)} a ${pp.formatDateTime(request.requestedFactoryPickupWindowEnd)}</td>
+          <td>${wheelSummaryVertical(request.wheelQuantities)}</td>
+          <td>${factoryWindow(request.expectedFactoryDropOffWindowStart, request.expectedFactoryDropOffWindowEnd)}</td>
+          <td>${factoryWindow(request.requestedFactoryPickupWindowStart, request.requestedFactoryPickupWindowEnd)}</td>
           <td>${pp.badge(request.lifecycleStatus)}</td>
           <td>${request.quantityDiscrepancy ? pp.badge('AT_RISK') : '-'}</td>
+          <td><button type="button" class="secondary" data-status="${request.id}">Estado</button></td>
         </tr>`).join('')}</tbody>
       </table></div>
     </section>`;
+  document.querySelectorAll('[data-status]').forEach(button => button.addEventListener('click', () => updateStatus(button.dataset.status)));
 }
 
 function renderSettings() {
-  const s = state.settings;
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
-      <div class="section-header"><h2>Capacidade, objetivo e janelas</h2></div>
-      <form id="settings-form" class="form-grid">
-        <label>Capacidade diária
-          <input name="dailyCapacity" type="number" min="0" value="${s.dailyCapacity}" required>
-        </label>
-        <label>Objetivo diário
-          <input name="dailyTarget" type="number" min="0" value="${s.dailyTarget}" required>
-        </label>
-        <label>Minutos estimados por jante
-          <input name="fallbackMinutesPerWheel" type="number" min="1" value="${s.fallbackMinutesPerWheel}" required>
-        </label>
-        <div class="wide">
-          <div class="section-header"><h3>Janelas de produção</h3><button id="add-window" type="button" class="secondary">Adicionar</button></div>
-          <div id="window-rows" class="list-stack">${s.timeWindows.map(windowRow).join('')}</div>
-        </div>
-        <input name="version" type="hidden" value="${s.version}">
-        <button type="submit">Guardar definições</button>
-        <p id="settings-message" class="message hidden wide" role="alert"></p>
-      </form>
-    </section>
-  `;
-  document.querySelector('#add-window').addEventListener('click', () => {
-    document.querySelector('#window-rows').insertAdjacentHTML('beforeend', windowRow({ label: '', cutoffTime: '18:30', sortOrder: document.querySelectorAll('[data-window-row]').length + 1 }));
-  });
-  document.querySelector('#settings-form').addEventListener('submit', saveSettings);
+      <div class="section-header"><h2>Capacidade</h2><span class="status">Em construção</span></div>
+      <p class="message warning">A configuração de capacidade está temporariamente desativada. Nesta fase, o planeamento usa apenas os targets mínimo e máximo.</p>
+      <p class="muted">A funcionalidade foi preservada para uso futuro, mas não permite navegação nem edição operacional neste momento.</p>
+    </section>`;
 }
 
 function windowRow(window) {
@@ -697,8 +749,9 @@ function renderDrivers() {
         <label>Palavra-passe<input name="password" type="password"></label>
         <button type="submit">Criar motorista</button>
       </form>
-      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Nome</th><th>Código</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
+      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Nome</th><th>ID RucoFi</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
         ${state.drivers.map(driver => `<tr>
+          <td><span class="code-pill">${pp.escapeHtml(driver.driverCode || '-')}</span></td>
           <td>${pp.escapeHtml(driver.name)}</td>
           <td>${pp.escapeHtml(driver.externalId || '-')}</td>
           <td>${driver.active ? 'Ativo' : 'Inativo'}</td>
@@ -712,18 +765,15 @@ function renderDrivers() {
         <input id="identity-search" value="${pp.escapeHtml(state.driverIdentityQuery || '')}">
       </label>
       <div class="table-wrap" style="margin-top:12px"><table>
-        <thead><tr><th>Motorista</th><th>Canal</th><th>Username</th><th>Perfil Telegram</th><th>Identificador externo</th><th>Contacto</th><th>Primeira interação</th><th>Última atividade</th><th>Onboarding</th><th>Pedidos</th><th>Ações</th></tr></thead>
+        <thead><tr><th>Código</th><th>Nome</th><th>Canal</th><th>Username</th><th>Contacto</th><th>Estado</th><th>Última atividade</th><th>Ações</th></tr></thead>
         <tbody>${identities.map(identity => `<tr>
+          <td><span class="code-pill">${pp.escapeHtml(identity.driverCode || '-')}</span></td>
           <td>${pp.escapeHtml(identity.driverName || 'Pendente')}</td>
           <td>${pp.escapeHtml(identity.channel)}</td>
           <td>${pp.escapeHtml(identity.externalUsername || '-')}</td>
-          <td>${pp.escapeHtml([identity.platformFirstName, identity.platformLastName].filter(Boolean).join(' ') || '-')}</td>
-          <td>${pp.escapeHtml(identity.externalUserId)}</td>
           <td>${pp.escapeHtml(identity.maskedPhoneNumber || '-')}</td>
-          <td>${pp.formatDateTime(identity.firstSeenAt)}</td>
-          <td>${pp.formatDateTime(identity.lastSeenAt)}</td>
           <td>${pp.escapeHtml(identity.onboardingStatus)}</td>
-          <td>${identity.requestCount || 0}${identity.lastRequestAt ? `<br><small>${pp.formatDateTime(identity.lastRequestAt)}</small>` : ''}</td>
+          <td>${pp.formatDateTime(identity.lastSeenAt)}</td>
           <td>
             ${identity.blockedAt
               ? `<button type="button" class="secondary" data-identity-reactivate="${identity.id}">Reativar</button>`
@@ -811,26 +861,31 @@ function renderCustomers() {
     <section class="panel">
       <div class="section-header"><h2>Clientes locais</h2></div>
       <form id="customer-form" class="form-grid">
-        <label>Código externo<input name="externalId"></label>
         <label>Nome<input name="name" required></label>
         <label>NIF/VAT<input name="taxIdentifier"></label>
-        <label>País ISO<input name="countryCode" maxlength="2"></label>
+        <label>País
+          <select name="countryCode">
+            <option value="PT">Portugal</option>
+            <option value="ES">Espanha</option>
+            <option value="FR">França</option>
+            <option value="LU">Luxemburgo</option>
+          </select>
+        </label>
         <label>Localidade<input name="locality"></label>
-        <label>Sistema externo<input name="externalSystem"></label>
-        <label>ID externo<input name="externalCustomerId"></label>
-        <button type="submit">Criar cliente</button>
+        <label>ID RucoFi opcional<input name="rucofiId"></label>
+        <button type="submit" ${state.busy.createCustomer ? 'disabled' : ''}>${state.busy.createCustomer ? 'A criar...' : 'Criar cliente'}</button>
+        <p id="customer-message" class="message hidden wide" role="alert"></p>
       </form>
-      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>ID técnico</th><th>Nº RucoPlan</th><th>Nome</th><th>NIF/VAT</th><th>País</th><th>Localidade</th><th>Sistema externo</th><th>ID externo</th><th>Estado</th></tr></thead><tbody>
+      <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Nome</th><th>NIF/VAT</th><th>País</th><th>Localidade</th><th>ID RucoFi</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
         ${state.customers.map(customer => `<tr>
-          <td>${pp.escapeHtml(customer.id)}</td>
-          <td>${customer.customerNumber || '-'}</td>
+          <td><span class="code-pill">${pp.escapeHtml(customer.customerCode || '-')}</span></td>
           <td>${pp.escapeHtml(customer.name)}</td>
           <td>${pp.escapeHtml(customer.taxIdentifier || '-')}</td>
-          <td>${pp.escapeHtml(customer.countryCode || '-')}</td>
+          <td>${pp.escapeHtml(countryName(customer.countryCode))}</td>
           <td>${pp.escapeHtml(customer.locality || '-')}</td>
-          <td>${pp.escapeHtml(customer.externalSystem || '-')}</td>
-          <td>${pp.escapeHtml(customer.externalCustomerId || customer.externalId || '-')}</td>
+          <td>${pp.escapeHtml(rucofiId(customer) || '-')}</td>
           <td>${customer.active ? 'Ativo' : 'Inativo'}</td>
+          <td><button type="button" class="secondary" disabled>Editar</button></td>
         </tr>`).join('')}
       </tbody></table></div>
     </section>`;
@@ -890,18 +945,33 @@ async function rejectCustomerRegistration(id) {
 async function createCustomer(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await api.postJson('/api/v1/admin/customers', {
-    externalId: form.externalId.value.trim(),
-    name: form.name.value.trim(),
-    taxIdentifier: form.taxIdentifier.value.trim(),
-    countryCode: form.countryCode.value.trim(),
-    locality: form.locality.value.trim(),
-    externalSystem: form.externalSystem.value.trim(),
-    externalCustomerId: form.externalCustomerId.value.trim(),
-    active: true
-  });
-  await loadAdminData();
-  renderCustomers();
+  const message = document.querySelector('#customer-message');
+  const submit = form.querySelector('button[type="submit"]');
+  pp.hideMessage(message);
+  state.busy.createCustomer = true;
+  submit.disabled = true;
+  submit.textContent = 'A criar...';
+  try {
+    const created = await api.postJson('/api/v1/admin/customers', {
+      name: form.name.value.trim(),
+      taxIdentifier: form.taxIdentifier.value.trim(),
+      countryCode: form.countryCode.value.trim(),
+      locality: form.locality.value.trim(),
+      externalSystem: form.rucofiId.value.trim() ? 'RUCOFI' : '',
+      externalCustomerId: form.rucofiId.value.trim(),
+      active: true
+    });
+    await loadAdminData();
+    state.busy.createCustomer = false;
+    renderCustomers();
+    pp.showMessage(document.querySelector('#customer-message'), `Cliente criado com o código ${created.customerCode}.`, 'success');
+  } catch (error) {
+    pp.showMessage(message, error.message || 'Não foi possível criar o cliente.');
+  } finally {
+    state.busy.createCustomer = false;
+    submit.disabled = false;
+    submit.textContent = 'Criar cliente';
+  }
 }
 
 function renderAudit() {
@@ -975,21 +1045,122 @@ function wheelSummary(quantities = []) {
   return `${bipartite} bipartidas · ${washed} lavadas · ${normal} normais`;
 }
 
+function wheelSummaryVertical(quantities = []) {
+  return `<div class="wheel-stack">
+    <span>${quantityValue(quantities, 'BIPARTITE')} bipartidas</span>
+    <span>${quantityValue(quantities, 'WASHED')} lavadas</span>
+    <span>${quantityValue(quantities, 'NORMAL')} normais</span>
+  </div>`;
+}
+
 function quantityValue(quantities, type) {
   const found = quantities?.find(quantity => quantity.type === type);
   return found?.quantity ?? found?.plannedQuantity ?? 0;
 }
 
-function typeClosureInputs(line, mode) {
+function typeClosureRows(line) {
   return ['BIPARTITE', 'WASHED', 'NORMAL'].map(type => {
     const quantity = line.wheelQuantities?.find(item => item.type === type) || {};
     const planned = quantity.plannedQuantity || 0;
-    const value = mode === 'completed'
-      ? (quantity.completedQuantity || planned)
-      : (quantity.remainingQuantity === planned ? 0 : quantity.remainingQuantity || 0);
+    const completed = quantity.completedQuantity ?? 0;
+    const remaining = quantity.remainingQuantity ?? planned;
     const label = type === 'BIPARTITE' ? 'Bipartidas' : type === 'WASHED' ? 'Lavadas' : 'Normais';
-    return `<label class="compact-input">${label}
-      <input data-type-${mode} data-type="${type}" data-type-planned="${planned}" type="number" min="0" max="${planned}" value="${value}">
-    </label>`;
+    return `<tr>
+      <td>${label}</td>
+      <td data-type-planned-label="${type}">${planned}</td>
+      <td><input data-type-completed data-type="${type}" data-type-planned="${planned}" type="number" min="0" max="${planned}" step="1" value="${completed}"></td>
+      <td><input data-type-remaining data-type="${type}" data-type-planned="${planned}" type="number" min="0" max="${planned}" step="1" value="${remaining}"></td>
+    </tr>`;
   }).join('');
+}
+
+function validateClosureRow(row) {
+  const error = row.querySelector('[data-line-error]');
+  let message = '';
+  let totalCompleted = 0;
+  let totalRemaining = 0;
+  for (const type of ['BIPARTITE', 'WASHED', 'NORMAL']) {
+    const completedInput = row.querySelector(`[data-type-completed][data-type="${type}"]`);
+    const remainingInput = row.querySelector(`[data-type-remaining][data-type="${type}"]`);
+    const planned = Number(completedInput.dataset.typePlanned);
+    const completed = Number(completedInput.value);
+    const remaining = Number(remainingInput.value);
+    if (!Number.isInteger(completed) || !Number.isInteger(remaining) || completedInput.value === '' || remainingInput.value === '') {
+      message = 'Use apenas números inteiros em todos os campos.';
+      break;
+    }
+    if (completed < 0 || remaining < 0 || completed > planned || remaining > planned) {
+      message = 'As quantidades não podem ser negativas nem superiores ao planeado.';
+      break;
+    }
+    if (completed + remaining !== planned) {
+      message = 'Por tipo, planeado tem de ser igual a concluído mais pendente.';
+      break;
+    }
+    totalCompleted += completed;
+    totalRemaining += remaining;
+  }
+  row.querySelector('[data-row-completed]').textContent = totalCompleted;
+  row.querySelector('[data-row-remaining]').textContent = totalRemaining;
+  if (message) {
+    error.textContent = message;
+    error.classList.remove('hidden');
+    return false;
+  }
+  error.classList.add('hidden');
+  return true;
+}
+
+function updateClosureTotals() {
+  let planned = 0;
+  let completed = 0;
+  let remaining = 0;
+  document.querySelectorAll('[data-closure-line]').forEach(row => {
+    planned += Number(row.querySelector('[data-row-planned]')?.textContent || 0);
+    completed += Number(row.querySelector('[data-row-completed]')?.textContent || 0);
+    remaining += Number(row.querySelector('[data-row-remaining]')?.textContent || 0);
+  });
+  const target = document.querySelector('#closure-summary');
+  if (target) {
+    target.innerHTML = `
+      ${metric('Total planeado', planned)}
+      ${metric('Total concluído', completed)}
+      ${metric('Total pendente', remaining)}
+    `;
+  }
+}
+
+function factoryWindow(start, end) {
+  if (!start || !end) return '-';
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const date = new Intl.DateTimeFormat('pt-PT', {
+    timeZone: 'Europe/Lisbon',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  }).format(startDate);
+  const time = new Intl.DateTimeFormat('pt-PT', {
+    timeZone: 'Europe/Lisbon',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  return `<div class="date-cell"><strong>${date}</strong><span>${time.format(startDate)}–${time.format(endDate)}</span></div>`;
+}
+
+function countryName(code) {
+  return ({ PT: 'Portugal', ES: 'Espanha', FR: 'França', LU: 'Luxemburgo' })[code] || code || '-';
+}
+
+function rucofiId(customer) {
+  return customer.externalSystem === 'RUCOFI' ? customer.externalCustomerId : '';
+}
+
+function targetsOutdated(plan) {
+  if (!plan || !state.planningTargets.length) return false;
+  const applicable = state.planningTargets
+    .filter(target => target.effectiveFrom <= plan.planningDate)
+    .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
+  return !!applicable && (applicable.minimumDailyTarget !== plan.minimumDailyTarget
+    || applicable.regularDailyCapacity !== plan.regularDailyCapacity);
 }
