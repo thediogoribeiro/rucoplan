@@ -9,11 +9,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import pt.rucodel.productionplanning.domain.*;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
+import pt.rucodel.productionplanning.service.DashboardEventPublisher;
 import pt.rucodel.productionplanning.telegram.*;
 
 import java.time.LocalDate;
@@ -22,6 +24,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -50,6 +54,7 @@ class TelegramFlowIntegrationTest {
     @jakarta.annotation.Resource PlanningAuditEventRepository audit;
     @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
     @jakarta.annotation.Resource JdbcTemplate jdbcTemplate;
+    @SpyBean DashboardEventPublisher dashboardEvents;
 
     private CustomerReferenceEntity customer;
 
@@ -166,10 +171,11 @@ class TelegramFlowIntegrationTest {
         assertThat(requests.findAll()).isEmpty();
 
         callback(24, 9101L, 7101L, "Confirmar pedido");
-        assertThat(bot.last()).contains("Pedido confirmado");
+        assertThat(bot.last()).contains("Pedido comunicado com sucesso", "pendente de confirmação de entrada na fábrica");
         assertThat(requests.findAll()).hasSize(1);
         WheelIntakeRequestEntity request = requests.findAll().getFirst();
         assertThat(request.getExpectedWheelQuantity()).isEqualTo(25);
+        assertThat(request.getLifecycleStatus()).isEqualTo(LifecycleStatus.COMMUNICATED);
         assertThat(request.wheelQuantity(WheelType.BIPARTITE)).isEqualTo(4);
         assertThat(request.wheelQuantity(WheelType.WASHED)).isEqualTo(6);
         assertThat(request.wheelQuantity(WheelType.NORMAL)).isEqualTo(15);
@@ -179,6 +185,17 @@ class TelegramFlowIntegrationTest {
         assertThat(request.getFactoryDropoffSlot()).isEqualTo(FactoryTimeSlot.MORNING_09_14);
         assertThat(request.getFactoryPickupSlot()).isEqualTo(FactoryTimeSlot.MORNING_09_14);
         assertThat(request.getNotes()).isNull();
+        ProductionPlanEntity plan = plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(LocalDate.of(2099, 9, 10))
+                .orElseThrow();
+        assertThat(planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId()))
+                .anySatisfy(line -> {
+                    assertThat(line.getRequest().getId()).isEqualTo(request.getId());
+                    assertThat(line.getQuantity()).isEqualTo(21);
+                    assertThat(line.plannedWheelQuantityMap().get(WheelType.BIPARTITE)).isZero();
+                    assertThat(line.plannedWheelQuantityMap().get(WheelType.WASHED)).isEqualTo(6);
+                    assertThat(line.plannedWheelQuantityMap().get(WheelType.NORMAL)).isEqualTo(15);
+                });
+        verify(dashboardEvents, atLeastOnce()).publishPlanUpdated(LocalDate.of(2099, 9, 10));
 
         callback(25, 9101L, 7101L, "Confirmar pedido");
         assertThat(requests.findAll()).hasSize(1);

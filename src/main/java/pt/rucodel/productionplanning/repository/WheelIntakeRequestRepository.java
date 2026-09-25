@@ -23,6 +23,8 @@ public interface WheelIntakeRequestRepository extends JpaRepository<WheelIntakeR
 
     long countByDriverId(UUID driverId);
 
+    long countByLifecycleStatus(LifecycleStatus lifecycleStatus);
+
     List<WheelIntakeRequestEntity> findByCustomerRegistrationRequestId(UUID customerRegistrationRequestId);
 
     @Query("""
@@ -59,5 +61,18 @@ public interface WheelIntakeRequestRepository extends JpaRepository<WheelIntakeR
             @Param("closedStatuses") Collection<LifecycleStatus> closedStatuses,
             @Param("before") OffsetDateTime before
     );
+
+    @Query("""
+            select r from WheelIntakeRequestEntity r
+            join fetch r.driver
+            left join fetch r.customer
+            where r.lifecycleStatus = :status
+            order by
+              case when r.expectedFactoryDropOffWindowEnd < CURRENT_TIMESTAMP then 0 else 1 end asc,
+              r.expectedFactoryDropOffWindowStart asc,
+              r.requestedFactoryPickupWindowStart asc,
+              r.requestCode asc
+            """)
+    List<WheelIntakeRequestEntity> findFactoryArrivalQueue(@Param("status") LifecycleStatus status);
 
 }

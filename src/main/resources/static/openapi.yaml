@@ -57,6 +57,19 @@ paths:
       responses:
         "201":
           description: Created request
+  /driver/requests/{requestId}/arrival:
+    post:
+      summary: Confirm physical factory arrival for the authenticated driver's own request
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Request moved to AT_FACTORY
   /admin/requests:
     get:
       summary: List all requests with filters
@@ -87,12 +100,51 @@ paths:
       responses:
         "200":
           description: Updated request
-  /admin/requests/{requestId}/status:
-    post:
-      summary: Update production lifecycle status
+  /admin/factory-arrivals:
+    get:
+      summary: List communicated requests waiting for physical factory arrival confirmation
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            enum: [COMMUNICATED]
       responses:
         "200":
-          description: Updated request
+          description: Requests waiting for arrival confirmation
+  /admin/factory-arrivals/{requestId}:
+    get:
+      summary: Retrieve a request in the factory-arrival workflow
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Request details
+  /admin/factory-arrivals/{requestId}/confirm:
+    post:
+      summary: Confirm physical arrival of communicated wheels at the factory
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            example:
+              actualArrivalAt: "2026-09-26T10:35:00+01:00"
+      responses:
+        "200":
+          description: Request moved to AT_FACTORY
   /admin/settings/daily:
     get:
       summary: Get effective daily production settings

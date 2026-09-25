@@ -31,6 +31,9 @@ public class ProductionTargetConfigurationEntity {
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
+    @Transient
+    private boolean systemDefault;
+
     @PrePersist
     void prePersist() {
         if (id == null) {
@@ -79,5 +82,13 @@ public class ProductionTargetConfigurationEntity {
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;
+    }
+
+    public boolean isSystemDefault() {
+        return systemDefault;
+    }
+
+    public void markSystemDefault() {
+        this.systemDefault = true;
     }
 }

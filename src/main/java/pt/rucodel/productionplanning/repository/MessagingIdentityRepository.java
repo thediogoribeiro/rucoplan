@@ -19,7 +19,6 @@ public interface MessagingIdentityRepository extends JpaRepository<MessagingIden
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             select identity from MessagingIdentityEntity identity
-            left join fetch identity.driver
             where identity.channel = :channel
               and identity.integrationKey = :integrationKey
               and identity.externalUserId = :externalUserId

@@ -1025,7 +1025,7 @@ public class TelegramUpdateProcessor {
         conversation.setActiveDraft(null);
         conversation.setState(TelegramConversationState.IDLE);
         conversations.save(conversation);
-        botClient.sendMessage(chatId, "Pedido confirmado. Obrigado.");
+        botClient.sendMessage(chatId, "Pedido comunicado com sucesso.\n\nO pedido ficará pendente de confirmação de entrada na fábrica quando as jantes forem entregues.");
     }
 
     private void cancelDraft(TelegramConversationEntity conversation, Long chatId) {

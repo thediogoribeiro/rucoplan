@@ -38,7 +38,7 @@ public class PlanningScheduler {
     public void recoverMissedCurrentDayPlan() {
         LocalDate today = LocalDate.now(clock.withZone(businessZone));
         LocalTime localTime = LocalTime.now(clock.withZone(businessZone));
-        if (!localTime.isBefore(LocalTime.of(7, 0))) {
+        if (!localTime.isBefore(LocalTime.of(7, 0)) || productionPlanningService.needsInitialPlanning(today)) {
             LOGGER.info("Checking startup recovery production plan date={}", today);
             productionPlanningService.recalculate(today, GenerationTrigger.STARTUP_RECOVERY, "SYSTEM");
         }

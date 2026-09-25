@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import pt.rucodel.productionplanning.domain.ProductionPlanStatus;
 import pt.rucodel.productionplanning.entity.ProductionPlanEntity;
 
 import java.time.LocalDate;
@@ -19,6 +20,8 @@ public interface ProductionPlanRepository extends JpaRepository<ProductionPlanEn
     List<ProductionPlanEntity> findByPlanningDateOrderByVersionNumberDesc(LocalDate planningDate);
 
     List<ProductionPlanEntity> findByPlanningDateBetweenAndCurrentPlanTrueOrderByPlanningDateAsc(LocalDate from, LocalDate to);
+
+    long countByCurrentPlanTrueAndStatusNot(ProductionPlanStatus status);
 
     @Query("select coalesce(max(p.versionNumber), 0) from ProductionPlanEntity p where p.planningDate = :date")
     int findMaxVersion(@Param("date") LocalDate date);

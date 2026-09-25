@@ -66,7 +66,7 @@ class PlanningEngineTest {
     @Test
     void physicallyReceivedWheelsUseActualArrivalTime() {
         PlanningWorkItem received = item("received", 4, "14:00", "18:00", Duration.ofMinutes(60),
-                at(day, "08:15"), LifecycleStatus.ARRIVED_AT_FACTORY, null, false, null, null);
+                at(day, "08:15"), LifecycleStatus.AT_FACTORY, null, false, null, null);
 
         PlanningItemResult item = plan(received).items().getFirst();
 
@@ -84,7 +84,7 @@ class PlanningEngineTest {
     @Test
     void missingInformationIsVisibleAndNeverSilentlyIgnored() {
         PlanningWorkItem missing = new PlanningWorkItem(id("missing"), "Cliente", "Motorista", 4, now,
-                at(day, "08:00"), null, null, null, LifecycleStatus.REGISTERED, null,
+                at(day, "08:00"), null, null, null, LifecycleStatus.COMMUNICATED, null,
                 false, null, null, Duration.ofHours(1), true);
 
         PlanningResult result = plan(missing);
@@ -96,7 +96,7 @@ class PlanningEngineTest {
     @Test
     void lockedAdministratorDecisionsSurviveRegeneration() {
         PlanningWorkItem locked = item("locked", 2, "08:00", "18:00", Duration.ofMinutes(60),
-                null, LifecycleStatus.REGISTERED, null, true, day, "Fim do dia");
+                null, LifecycleStatus.COMMUNICATED, null, true, day, "Fim do dia");
 
         PlanningItemResult item = plan(locked).items().getFirst();
 
@@ -109,7 +109,7 @@ class PlanningEngineTest {
     void manualPriorityIsRespected() {
         PlanningWorkItem normal = item("normal", 2, "08:00", "12:00");
         PlanningWorkItem manual = item("manual", 2, "10:00", "18:00", Duration.ofMinutes(30),
-                null, LifecycleStatus.REGISTERED, 1, false, null, null);
+                null, LifecycleStatus.COMMUNICATED, 1, false, null, null);
 
         PlanningResult result = plan(normal, manual);
 
@@ -239,7 +239,7 @@ class PlanningEngineTest {
                 dropEnd,
                 null,
                 pickupStart,
-                LifecycleStatus.REGISTERED,
+                LifecycleStatus.COMMUNICATED,
                 null,
                 false,
                 null,

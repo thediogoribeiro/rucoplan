@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import pt.rucodel.productionplanning.domain.*;
 import pt.rucodel.productionplanning.dto.DailySettingsRequest;
+import pt.rucodel.productionplanning.dto.RequestUpdateRequest;
 import pt.rucodel.productionplanning.dto.TimeWindowDto;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
@@ -71,10 +72,12 @@ class CapacityAlertIntegrationTest {
     @Test
     void loadAtOrBelowCapacityDoesNotGenerateAlertAndOverCapacityDoes() {
         createTelegramRequest("telegram-alert-1", 10);
+        productionPlans.generate(date, GenerationTrigger.MANUAL, "TEST");
 
         assertThat(capacityAlerts.findAll()).isEmpty();
 
         createTelegramRequest("telegram-alert-2", 1);
+        productionPlans.generate(date, GenerationTrigger.MANUAL, "TEST");
 
         List<CapacityAlertEntity> alerts = capacityAlerts.findAll();
         assertThat(alerts).hasSize(1);
@@ -106,6 +109,7 @@ class CapacityAlertIntegrationTest {
     @Test
     void capacityIncreaseResolvesActiveAlertAndCancellationCanResolveIt() {
         WheelIntakeRequestEntity request = createTelegramRequest("telegram-alert-3", 12);
+        productionPlans.generate(date, GenerationTrigger.MANUAL, "TEST");
         CapacityAlertEntity firstAlert = capacityAlerts.findAll().getFirst();
         assertThat(firstAlert.getStatus()).isEqualTo(CapacityAlertStatus.ACTIVE);
 
@@ -120,9 +124,12 @@ class CapacityAlertIntegrationTest {
                 settings.findBySettingsDate(date).orElseThrow().getVersion()), "TEST");
         assertThat(capacityAlerts.findByStatusInOrderByAffectedDateAscCreatedAtAsc(List.of(CapacityAlertStatus.ACTIVE))).hasSize(1);
 
-        intakeRequests.updateStatus(request.getId(),
-                new pt.rucodel.productionplanning.dto.UpdateStatusRequest(LifecycleStatus.CANCELLED, null, "Teste", request.getVersion()),
-                new AuthenticatedUser(UUID.randomUUID(), "admin", "Admin", UserRole.ADMIN, null));
+        long currentVersion = requests.findById(request.getId()).orElseThrow().getVersion();
+        intakeRequests.cancelForDriver(request.getId(), driver.getId(),
+                new RequestUpdateRequest(null, null, null, null, null, null, null,
+                        "Teste", null, null, currentVersion),
+                new AuthenticatedUser(UUID.randomUUID(), "driver", "Motorista", UserRole.DRIVER, driver.getId()));
+        productionPlans.generate(date, GenerationTrigger.MANUAL, "TEST");
 
         assertThat(capacityAlerts.findByStatusInOrderByAffectedDateAscCreatedAtAsc(List.of(CapacityAlertStatus.ACTIVE))).isEmpty();
     }

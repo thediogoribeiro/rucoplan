@@ -3,6 +3,7 @@ package pt.rucodel.productionplanning.controller;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import pt.rucodel.productionplanning.dto.ConfirmArrivalRequest;
 import pt.rucodel.productionplanning.dto.PageResponse;
 import pt.rucodel.productionplanning.dto.RequestCreateRequest;
 import pt.rucodel.productionplanning.dto.RequestResponse;
@@ -52,5 +53,10 @@ public class DriverRequestController {
     public RequestResponse cancel(@PathVariable UUID requestId, @Valid @RequestBody RequestUpdateRequest request) {
         AuthenticatedUser user = currentUserService.requireUser();
         return requests.cancelForDriver(requestId, user.driverId(), request, user);
+    }
+
+    @PostMapping("/{requestId}/arrival")
+    public RequestResponse confirmArrival(@PathVariable UUID requestId, @Valid @RequestBody ConfirmArrivalRequest request) {
+        return requests.confirmArrival(requestId, request, currentUserService.requireUser());
     }
 }

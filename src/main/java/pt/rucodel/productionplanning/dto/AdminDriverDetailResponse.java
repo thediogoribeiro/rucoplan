@@ -8,6 +8,7 @@ public record AdminDriverDetailResponse(
         UUID id,
         String driverCode,
         String externalId,
+        String rucofiId,
         String name,
         boolean active,
         long version,

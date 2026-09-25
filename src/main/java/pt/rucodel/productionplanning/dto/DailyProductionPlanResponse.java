@@ -1,5 +1,6 @@
 package pt.rucodel.productionplanning.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import pt.rucodel.productionplanning.domain.GenerationTrigger;
 import pt.rucodel.productionplanning.domain.ProductionPlanStatus;
 
@@ -33,4 +34,8 @@ public record DailyProductionPlanResponse(
         long version,
         List<DailyProductionPlanLineResponse> lines
 ) {
+    @JsonProperty("items")
+    public List<DailyProductionPlanLineResponse> items() {
+        return lines;
+    }
 }

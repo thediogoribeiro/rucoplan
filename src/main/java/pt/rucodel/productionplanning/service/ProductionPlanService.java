@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
 public class ProductionPlanService {
     private static final Logger LOGGER = LoggerFactory.getLogger(ProductionPlanService.class);
     private static final EnumSet<LifecycleStatus> CLOSED_STATUSES = EnumSet.of(
-            LifecycleStatus.PICKED_UP_FROM_FACTORY,
+            LifecycleStatus.READY_FOR_PICKUP,
             LifecycleStatus.CANCELLED
     );
 
@@ -188,7 +188,7 @@ public class ProductionPlanService {
                 .sorted(Comparator.comparing(WheelIntakeRequestEntity::getRequestedFactoryPickupWindowStart))
                 .map(mapper::toRequest)
                 .toList();
-        int wheelsAtFactory = sumByStatus(openRequests, LifecycleStatus.ARRIVED_AT_FACTORY, LifecycleStatus.IN_PRODUCTION, LifecycleStatus.READY_FOR_PICKUP);
+        int wheelsAtFactory = sumByStatus(openRequests, LifecycleStatus.AT_FACTORY, LifecycleStatus.IN_PRODUCTION, LifecycleStatus.READY_FOR_PICKUP);
         int wheelsInProduction = sumByStatus(openRequests, LifecycleStatus.IN_PRODUCTION);
         int wheelsReady = sumByStatus(openRequests, LifecycleStatus.READY_FOR_PICKUP);
         int planned = plan == null ? 0 : plan.totalPlanned();

@@ -7,6 +7,9 @@ import pt.rucodel.productionplanning.domain.RequestSource;
 import pt.rucodel.productionplanning.domain.WheelType;
 
 import java.time.OffsetDateTime;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -27,6 +30,10 @@ import java.util.UUID;
         }
 )
 public class WheelIntakeRequestEntity extends BaseEntity {
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Europe/Lisbon");
+    private static final int BIPARTITE_MINIMUM_BUSINESS_DAYS = 15;
+    private static final String BIPARTITE_DEADLINE_REASON = "Prazo mínimo de 15 dias úteis para jantes bipartidas.";
+
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
@@ -105,6 +112,15 @@ public class WheelIntakeRequestEntity extends BaseEntity {
     @Column(name = "actual_factory_arrival_at")
     private OffsetDateTime actualFactoryArrivalAt;
 
+    @Column(name = "arrival_confirmed_at")
+    private OffsetDateTime arrivalConfirmedAt;
+
+    @Column(name = "arrival_confirmed_by", length = 160)
+    private String arrivalConfirmedBy;
+
+    @Column(name = "arrival_confirmation_source", length = 80)
+    private String arrivalConfirmationSource;
+
     @Column(name = "actual_pickup_from_factory_at")
     private OffsetDateTime actualPickupFromFactoryAt;
 
@@ -116,7 +132,7 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "lifecycle_status", nullable = false, length = 40)
-    private LifecycleStatus lifecycleStatus = LifecycleStatus.REGISTERED;
+    private LifecycleStatus lifecycleStatus = LifecycleStatus.COMMUNICATED;
 
     @Column(name = "manual_priority")
     private Integer manualPriority;
@@ -136,12 +152,52 @@ public class WheelIntakeRequestEntity extends BaseEntity {
     }
 
     @PrePersist
+    @PreUpdate
     void ensureWheelQuantityRows() {
         if (wheelQuantities.isEmpty() && expectedWheelQuantity > 0) {
             replaceWheelQuantities(Map.of(WheelType.NORMAL, expectedWheelQuantity));
         }
         expectedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getQuantity).sum();
         completedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getCompletedQuantity).sum();
+        refreshWheelQuantityDeadlines();
+    }
+
+    private void refreshWheelQuantityDeadlines() {
+        if (requestedFactoryPickupWindowStart == null || expectedFactoryDropOffWindowEnd == null) {
+            return;
+        }
+        OffsetDateTime available = actualFactoryArrivalAt == null ? expectedFactoryDropOffWindowEnd : actualFactoryArrivalAt;
+        for (RequestWheelQuantityEntity quantity : wheelQuantities) {
+            quantity.setRequestedDeadlineAt(requestedFactoryPickupWindowStart);
+            if (quantity.getWheelType() == WheelType.BIPARTITE && quantity.getQuantity() > 0) {
+                OffsetDateTime minimumDeadline = minimumBipartiteDeadline(available, requestedFactoryPickupWindowStart);
+                if (minimumDeadline.isAfter(requestedFactoryPickupWindowStart)) {
+                    quantity.setEffectiveDeadlineAt(minimumDeadline);
+                    quantity.setDeadlineAdjustmentReason(BIPARTITE_DEADLINE_REASON);
+                    continue;
+                }
+            }
+            quantity.setEffectiveDeadlineAt(requestedFactoryPickupWindowStart);
+            quantity.setDeadlineAdjustmentReason(null);
+        }
+    }
+
+    private OffsetDateTime minimumBipartiteDeadline(OffsetDateTime available, OffsetDateTime requestedDeadline) {
+        LocalDate date = available.atZoneSameInstant(BUSINESS_ZONE).toLocalDate();
+        int remaining = BIPARTITE_MINIMUM_BUSINESS_DAYS;
+        while (remaining > 0) {
+            date = date.plusDays(1);
+            if (isBusinessDay(date)) {
+                remaining--;
+            }
+        }
+        return date.atTime(requestedDeadline.atZoneSameInstant(BUSINESS_ZONE).toLocalTime())
+                .atZone(BUSINESS_ZONE)
+                .toOffsetDateTime();
+    }
+
+    private boolean isBusinessDay(LocalDate date) {
+        return date.getDayOfWeek() != DayOfWeek.SATURDAY && date.getDayOfWeek() != DayOfWeek.SUNDAY;
     }
 
     public UUID getId() {
@@ -379,6 +435,30 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     public void setActualFactoryArrivalAt(OffsetDateTime actualFactoryArrivalAt) {
         this.actualFactoryArrivalAt = actualFactoryArrivalAt;
+    }
+
+    public OffsetDateTime getArrivalConfirmedAt() {
+        return arrivalConfirmedAt;
+    }
+
+    public void setArrivalConfirmedAt(OffsetDateTime arrivalConfirmedAt) {
+        this.arrivalConfirmedAt = arrivalConfirmedAt;
+    }
+
+    public String getArrivalConfirmedBy() {
+        return arrivalConfirmedBy;
+    }
+
+    public void setArrivalConfirmedBy(String arrivalConfirmedBy) {
+        this.arrivalConfirmedBy = arrivalConfirmedBy;
+    }
+
+    public String getArrivalConfirmationSource() {
+        return arrivalConfirmationSource;
+    }
+
+    public void setArrivalConfirmationSource(String arrivalConfirmationSource) {
+        this.arrivalConfirmationSource = arrivalConfirmationSource;
     }
 
     public OffsetDateTime getActualPickupFromFactoryAt() {

@@ -148,6 +148,13 @@ th {
 .message.error { border-color: #f0b5ad; background: #fff4f2; color: var(--error); }
 .message.warning { border-color: #f4d89a; background: #fff8e8; color: var(--warning); }
 .message.success { border-color: #b9e2c5; background: #eefaf2; color: var(--success); }
+.message.info { border-color: #bdd2ef; background: #f1f6fd; color: var(--info); }
+
+.technical-link {
+  color: inherit;
+  font-weight: 820;
+  text-decoration: underline;
+}
 
 .status {
   display: inline-flex;
@@ -160,11 +167,10 @@ th {
   white-space: nowrap;
 }
 
-.status.REGISTERED, .status.TENTATIVE { background: #eef3fb; color: var(--info); }
-.status.ARRIVED_AT_FACTORY, .status.CONFIRMED, .status.ON_TRACK { background: #e8f6ee; color: var(--success); }
+.status.COMMUNICATED, .status.TENTATIVE { background: #eef3fb; color: var(--info); }
+.status.AT_FACTORY, .status.ON_TRACK { background: #e8f6ee; color: var(--success); }
 .status.IN_PRODUCTION { background: #edf2ff; color: #2f5597; }
 .status.READY_FOR_PICKUP { background: #e7f5ed; color: var(--success); }
-.status.PICKED_UP_FROM_FACTORY { background: #eeeeee; color: var(--muted); }
 .status.CANCELLED { background: #f0f0f0; color: #555; }
 .status.AT_RISK, .status.WAITING_FOR_ARRIVAL, .status.MISSING_INFORMATION { background: #fff4db; color: var(--warning); }
 .status.OVERDUE, .status.OVER_CAPACITY { background: #fde8e6; color: var(--error); }
@@ -249,6 +255,29 @@ th {
   white-space: nowrap;
 }
 
+.settings-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-subnav a {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 760;
+}
+
+.settings-subnav a:hover,
+.settings-subnav a.active {
+  border-color: var(--brand);
+  background: var(--soft-red);
+  color: var(--brand-dark);
+}
+
 .main {
   min-width: 0;
   padding: 24px;
@@ -282,6 +311,10 @@ th {
   font-weight: 720;
 }
 
+.connection-status.message {
+  color: var(--warning);
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(140px, 1fr));
@@ -295,6 +328,15 @@ th {
 
 .metric-grid-secondary {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.metric-grid-dashboard-primary,
+.metric-grid-dashboard-secondary {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+
+.metric-grid-dashboard-secondary .metric.overtime {
+  grid-column: span 2;
 }
 
 .metric, .panel, .list-item, .login-panel {
@@ -367,6 +409,16 @@ th {
 }
 
 .table-wrap { overflow-x: auto; }
+
+.diagnostics-table th {
+  width: 260px;
+  background: #fff;
+}
+
+.diagnostics-table td {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: .82rem;
+}
 
 .requests-table th,
 .requests-table td {
@@ -644,6 +696,8 @@ button.list-item:hover { background: var(--soft); }
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .metric-grid-primary,
+  .metric-grid-dashboard-primary,
+  .metric-grid-dashboard-secondary,
   .closure-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -656,7 +710,8 @@ button.list-item:hover { background: var(--soft); }
 @media (max-width: 680px) {
   .main { padding: 16px; }
   .nav { grid-template-columns: 1fr 1fr; }
-  .metric-grid, .metric-grid-primary, .closure-summary, .driver-summary, .form-grid { grid-template-columns: 1fr; }
+  .metric-grid, .metric-grid-primary, .metric-grid-dashboard-primary, .metric-grid-dashboard-secondary, .closure-summary, .driver-summary, .form-grid { grid-template-columns: 1fr; }
+  .metric-grid-dashboard-secondary .metric.overtime { grid-column: auto; }
   .info-row { grid-template-columns: 1fr; }
   table { font-size: .82rem; }
   th, td { padding: 8px 6px; }

@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
 @Service
 public class CapacityAlertService {
     private static final EnumSet<LifecycleStatus> CLOSED_STATUSES = EnumSet.of(
-            LifecycleStatus.PICKED_UP_FROM_FACTORY,
+            LifecycleStatus.READY_FOR_PICKUP,
             LifecycleStatus.CANCELLED
     );
     private static final EnumSet<CapacityAlertStatus> OPEN_STATUSES = EnumSet.of(

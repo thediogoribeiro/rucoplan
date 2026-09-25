@@ -43,6 +43,12 @@ app:
     recovery-hour: 7
     fallback-minutes-per-wheel: ${APP_FALLBACK_MINUTES_PER_WHEEL:45}
     overnight-end-time: ${PLANNING_OVERNIGHT_END_TIME:06:00}
+    weekday-production-start: ${PLANNING_WEEKDAY_PRODUCTION_START:04:00}
+    weekday-production-end: ${PLANNING_WEEKDAY_PRODUCTION_END:22:00}
+    saturday-production-start: ${PLANNING_SATURDAY_PRODUCTION_START:04:00}
+    saturday-production-end: ${PLANNING_SATURDAY_PRODUCTION_END:13:00}
+    saturday-production-factor: ${PLANNING_SATURDAY_PRODUCTION_FACTOR:0.5}
+    sunday-production-factor: ${PLANNING_SUNDAY_PRODUCTION_FACTOR:0}
   integrations:
     telegram:
       enabled: ${TELEGRAM_ENABLED:false}

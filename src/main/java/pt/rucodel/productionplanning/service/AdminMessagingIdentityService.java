@@ -104,6 +104,7 @@ public class AdminMessagingIdentityService {
                 driver.getId(),
                 driver.getDriverCode(),
                 driver.getExternalId(),
+                driver.getRucofiId(),
                 driver.getName(),
                 driver.isActive(),
                 driver.getVersion(),

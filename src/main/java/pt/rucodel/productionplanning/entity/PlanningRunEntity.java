@@ -45,6 +45,38 @@ public class PlanningRunEntity {
         return id;
     }
 
+    public GenerationTrigger getTrigger() {
+        return trigger;
+    }
+
+    public PlanningRunStatus getStatus() {
+        return status;
+    }
+
+    public OffsetDateTime getStartedAt() {
+        return startedAt;
+    }
+
+    public OffsetDateTime getFinishedAt() {
+        return finishedAt;
+    }
+
+    public LocalDate getAffectedDateFrom() {
+        return affectedDateFrom;
+    }
+
+    public LocalDate getAffectedDateTo() {
+        return affectedDateTo;
+    }
+
+    public String getActor() {
+        return actor;
+    }
+
+    public String getSummary() {
+        return summary;
+    }
+
     public void setTrigger(GenerationTrigger trigger) {
         this.trigger = trigger;
     }

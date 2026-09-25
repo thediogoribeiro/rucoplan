@@ -11,6 +11,8 @@ import java.util.UUID;
 public interface DriverRepository extends JpaRepository<DriverEntity, UUID> {
     Optional<DriverEntity> findByExternalId(String externalId);
 
+    Optional<DriverEntity> findByDriverCode(String driverCode);
+
     Optional<DriverEntity> findByTelegramUserId(Long telegramUserId);
 
     @Query(value = "select nextval('driver_code_seq')", nativeQuery = true)

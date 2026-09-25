@@ -28,7 +28,7 @@ public record PlanningWorkItem(
 
     public boolean physicallyAtFactory() {
         return actualFactoryArrivalAt != null
-                || lifecycleStatus == LifecycleStatus.ARRIVED_AT_FACTORY
+                || lifecycleStatus == LifecycleStatus.AT_FACTORY
                 || lifecycleStatus == LifecycleStatus.IN_PRODUCTION
                 || lifecycleStatus == LifecycleStatus.READY_FOR_PICKUP;
     }

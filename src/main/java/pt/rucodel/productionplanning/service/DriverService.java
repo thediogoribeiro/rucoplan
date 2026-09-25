@@ -86,6 +86,9 @@ public class DriverService {
         if (request.externalId() != null) {
             driver.setExternalId(blankToNull(request.externalId()));
         }
+        if (request.rucofiId() != null) {
+            driver.setRucofiId(blankToNull(request.rucofiId()));
+        }
         driver.setName(request.name().trim());
         driver.setActive(request.active() == null || request.active());
     }

@@ -1,15 +1,16 @@
 package pt.rucodel.productionplanning.dto;
 
-import jakarta.validation.constraints.NotNull;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.Positive;
 
 import java.time.OffsetDateTime;
 
 public record ConfirmArrivalRequest(
-        @NotNull OffsetDateTime actualFactoryArrivalAt,
+        @JsonAlias("actualArrivalAt")
+        OffsetDateTime actualFactoryArrivalAt,
         @Positive Integer actualReceivedWheelQuantity,
         Boolean acknowledgeDiscrepancy,
         String reason,
-        @NotNull Long version
+        Long version
 ) {
 }

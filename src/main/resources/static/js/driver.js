@@ -37,11 +37,11 @@ function render() {
 
 function renderDashboard() {
   const app = document.querySelector('#driver-app');
-  const active = state.requests.filter(request => !['CANCELLED', 'PICKED_UP_FROM_FACTORY'].includes(request.lifecycleStatus));
+  const active = state.requests.filter(request => request.lifecycleStatus !== 'CANCELLED');
   const upcomingDeliveries = active.filter(request => !request.actualFactoryArrivalAt)
     .sort((a, b) => new Date(a.expectedFactoryDropOffWindowStart) - new Date(b.expectedFactoryDropOffWindowStart))
     .slice(0, 5);
-  const pickups = active.filter(request => ['IN_PRODUCTION', 'READY_FOR_PICKUP', 'ARRIVED_AT_FACTORY'].includes(request.lifecycleStatus))
+  const pickups = active.filter(request => ['IN_PRODUCTION', 'READY_FOR_PICKUP', 'AT_FACTORY'].includes(request.lifecycleStatus))
     .sort((a, b) => new Date(a.requestedFactoryPickupWindowStart) - new Date(b.requestedFactoryPickupWindowStart))
     .slice(0, 5);
   const warnings = active.filter(request => request.quantityDiscrepancy && !request.quantityDiscrepancyAcknowledged);
@@ -139,7 +139,7 @@ function renderRequestList() {
 
 function renderDetail(request) {
   state.selectedRequest = request;
-  const editable = request.lifecycleStatus === 'REGISTERED' && !request.actualFactoryArrivalAt;
+  const editable = request.lifecycleStatus === 'COMMUNICATED' && !request.actualFactoryArrivalAt;
   document.querySelector('#detail').innerHTML = `
     <section class="driver-card" style="margin-top:12px">
       <h2>${pp.escapeHtml(request.customerNameSnapshot)}</h2>

@@ -1,8 +1,10 @@
 package pt.rucodel.productionplanning.service;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import org.springframework.context.ApplicationEventPublisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.*;
@@ -32,9 +34,12 @@ import java.util.UUID;
 
 @Service
 public class WheelIntakeRequestService {
-    private static final EnumSet<LifecycleStatus> DRIVER_EDITABLE_STATUSES = EnumSet.of(LifecycleStatus.REGISTERED);
+    private static final Logger LOGGER = LoggerFactory.getLogger(WheelIntakeRequestService.class);
+    private static final EnumSet<LifecycleStatus> DRIVER_EDITABLE_STATUSES = EnumSet.of(
+            LifecycleStatus.COMMUNICATED
+    );
     private static final EnumSet<LifecycleStatus> CLOSED_STATUSES = EnumSet.of(
-            LifecycleStatus.PICKED_UP_FROM_FACTORY,
+            LifecycleStatus.READY_FOR_PICKUP,
             LifecycleStatus.CANCELLED
     );
 
@@ -47,7 +52,6 @@ public class WheelIntakeRequestService {
     private final RecalculationService recalculationService;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
-    private final CapacityAlertService capacityAlertService;
     private final WheelQuantityService wheelQuantityService;
     private final PublicCodeService publicCodes;
 
@@ -55,7 +59,7 @@ public class WheelIntakeRequestService {
                                      DriverRepository drivers, RequestStatusHistoryRepository statusHistory,
                                      ApiMapper mapper, Clock clock, RecalculationService recalculationService,
                                      AuditService auditService, ApplicationEventPublisher eventPublisher,
-                                     CapacityAlertService capacityAlertService, WheelQuantityService wheelQuantityService,
+                                     WheelQuantityService wheelQuantityService,
                                      PublicCodeService publicCodes) {
         this.requests = requests;
         this.customers = customers;
@@ -66,7 +70,6 @@ public class WheelIntakeRequestService {
         this.recalculationService = recalculationService;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
-        this.capacityAlertService = capacityAlertService;
         this.wheelQuantityService = wheelQuantityService;
         this.publicCodes = publicCodes;
     }
@@ -134,10 +137,11 @@ public class WheelIntakeRequestService {
                 actor
         );
         WheelIntakeRequestEntity saved = requests.save(entity);
-        recordStatus(saved, null, LifecycleStatus.REGISTERED, null, actor, "Criado pelo agente WhatsApp.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, actor, "Pedido comunicado pelo agente WhatsApp.");
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, saved.getId(), "REQUEST_CREATED", actor, "Request created from WhatsApp agent.");
+        logCommunicatedRequest(saved);
+        publishRequestCommunicated(saved);
         return saved;
     }
 
@@ -230,11 +234,11 @@ public class WheelIntakeRequestService {
         entity.setFactoryDropoffSlot(dropoffSlot);
         entity.setFactoryPickupSlot(pickupSlot);
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        recordStatus(saved, null, LifecycleStatus.REGISTERED, null, "TELEGRAM", "Criado pelo bot Telegram.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, "TELEGRAM", "Pedido comunicado pelo bot Telegram.");
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, saved.getId(), "REQUEST_CREATED", "TELEGRAM", "Request created from Telegram bot.");
-        eventPublisher.publishEvent(new WheelIntakeRequestConfirmedEvent(saved.getId(), RequestSource.TELEGRAM));
+        logCommunicatedRequest(saved);
+        publishRequestCommunicated(saved);
         return saved;
     }
 
@@ -267,6 +271,18 @@ public class WheelIntakeRequestService {
         return mapper.toRequest(requireRequest(requestId));
     }
 
+    @Transactional(readOnly = true)
+    public List<RequestResponse> listFactoryArrivals(LifecycleStatus status) {
+        LifecycleStatus effectiveStatus = status == null ? LifecycleStatus.COMMUNICATED : status;
+        if (effectiveStatus != LifecycleStatus.COMMUNICATED) {
+            throw new InvalidRequestException("FACTORY_ARRIVAL_STATUS_INVALID",
+                    "A Entrada na Fábrica lista apenas pedidos comunicados.");
+        }
+        return requests.findFactoryArrivalQueue(effectiveStatus).stream()
+                .map(mapper::toRequest)
+                .toList();
+    }
+
     @Transactional
     public RequestResponse updateForDriver(UUID requestId, UUID driverId, RequestUpdateRequest update, AuthenticatedUser user) {
         WheelIntakeRequestEntity entity = requireRequest(requestId);
@@ -276,7 +292,6 @@ public class WheelIntakeRequestService {
         }
         applyUpdate(entity, update, false, user.actorLabel());
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, entity.getId(), "REQUEST_UPDATED", user.actorLabel(), "Driver updated request.");
         return mapper.toRequest(requests.saveAndFlush(entity));
     }
@@ -286,7 +301,6 @@ public class WheelIntakeRequestService {
         WheelIntakeRequestEntity entity = requireRequest(requestId);
         applyUpdate(entity, update, true, user.actorLabel());
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, entity.getId(), "REQUEST_UPDATED", user.actorLabel(), "Administrator updated request.");
         return mapper.toRequest(requests.saveAndFlush(entity));
     }
@@ -296,7 +310,7 @@ public class WheelIntakeRequestService {
         WheelIntakeRequestEntity entity = requireRequest(requestId);
         requireDriverOwnership(entity, driverId);
         requireVersion(entity, request.version());
-        if (entity.getActualFactoryArrivalAt() != null || entity.getLifecycleStatus() != LifecycleStatus.REGISTERED) {
+        if (entity.getActualFactoryArrivalAt() != null || !DRIVER_EDITABLE_STATUSES.contains(entity.getLifecycleStatus())) {
             throw new ForbiddenOperationException("Only future requests that have not arrived at the factory can be cancelled by the driver.");
         }
         if (!entity.getExpectedFactoryDropOffWindowStart().isAfter(OffsetDateTime.now(clock))) {
@@ -305,29 +319,48 @@ public class WheelIntakeRequestService {
         changeStatus(entity, LifecycleStatus.CANCELLED, user, "Pedido cancelado pelo motorista/vendedor.");
         recalculationService.markCurrentAndFuturePlans();
         RequestResponse response = mapper.toRequest(requests.saveAndFlush(entity));
-        capacityAlertService.recalculateFromToday();
         return response;
     }
 
     @Transactional
     public RequestResponse confirmArrival(UUID requestId, ConfirmArrivalRequest request, AuthenticatedUser user) {
         WheelIntakeRequestEntity entity = requireRequest(requestId);
-        requireVersion(entity, request.version());
-        entity.setActualFactoryArrivalAt(request.actualFactoryArrivalAt());
+        if (user.role() == UserRole.DRIVER) {
+            requireDriverOwnership(entity, user.driverId());
+        }
+        if (entity.getActualFactoryArrivalAt() != null
+                && EnumSet.of(LifecycleStatus.AT_FACTORY, LifecycleStatus.IN_PRODUCTION, LifecycleStatus.READY_FOR_PICKUP)
+                .contains(entity.getLifecycleStatus())) {
+            return mapper.toRequest(entity);
+        }
+        if (request.version() != null) {
+            requireVersion(entity, request.version());
+        }
+        OffsetDateTime actualArrivalAt = request.actualFactoryArrivalAt() == null
+                ? OffsetDateTime.now(clock)
+                : request.actualFactoryArrivalAt();
+        if (actualArrivalAt.isAfter(OffsetDateTime.now(clock).plusMinutes(5))) {
+            throw new InvalidRequestException("FACTORY_ARRIVAL_IN_FUTURE",
+                    "A chegada real não pode ser uma data futura.");
+        }
+        entity.setActualFactoryArrivalAt(actualArrivalAt);
+        entity.setArrivalConfirmedAt(OffsetDateTime.now(clock));
+        entity.setArrivalConfirmedBy(user.actorLabel());
+        entity.setArrivalConfirmationSource(user.role() == UserRole.DRIVER ? "DRIVER" : "ADMIN");
         if (request.actualReceivedWheelQuantity() != null) {
             entity.setActualReceivedWheelQuantity(request.actualReceivedWheelQuantity());
             entity.setQuantityDiscrepancyAcknowledged(discrepancyAcknowledged(entity, request.acknowledgeDiscrepancy()));
         }
         entity.setUpdatedBy(user.actorLabel());
-        if (entity.getLifecycleStatus() == LifecycleStatus.REGISTERED) {
-            changeStatus(entity, LifecycleStatus.ARRIVED_AT_FACTORY, user, request.reason());
+        if (entity.getLifecycleStatus() == LifecycleStatus.COMMUNICATED) {
+            changeStatus(entity, LifecycleStatus.AT_FACTORY, user, request.reason() == null ? "Chegada física confirmada." : request.reason());
         } else {
             auditService.record(null, entity.getId(), "REQUEST_ARRIVAL_CONFIRMED", user.actorLabel(), "Factory arrival confirmed.");
         }
         recalculationService.markCurrentAndFuturePlans();
-        RequestResponse response = mapper.toRequest(requests.saveAndFlush(entity));
-        capacityAlertService.recalculateFromToday();
-        return response;
+        WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
+        eventPublisher.publishEvent(new WheelIntakeRequestArrivedEvent(saved.getId(), saved.getSource()));
+        return mapper.toRequest(saved);
     }
 
     @Transactional
@@ -338,7 +371,6 @@ public class WheelIntakeRequestService {
         entity.setQuantityDiscrepancyAcknowledged(discrepancyAcknowledged(entity, request.acknowledgeDiscrepancy()));
         entity.setUpdatedBy(user.actorLabel());
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, entity.getId(), "RECEIVED_QUANTITY_CONFIRMED", user.actorLabel(),
                 "Received quantity confirmed as " + request.actualReceivedWheelQuantity() + ".");
         return mapper.toRequest(requests.saveAndFlush(entity));
@@ -346,18 +378,7 @@ public class WheelIntakeRequestService {
 
     @Transactional
     public RequestResponse updateStatus(UUID requestId, UpdateStatusRequest request, AuthenticatedUser user) {
-        WheelIntakeRequestEntity entity = requireRequest(requestId);
-        requireVersion(entity, request.version());
-        if (request.status() == LifecycleStatus.PICKED_UP_FROM_FACTORY) {
-            entity.setActualPickupFromFactoryAt(request.actualPickupFromFactoryAt() == null
-                    ? OffsetDateTime.now(clock)
-                    : request.actualPickupFromFactoryAt());
-        }
-        changeStatus(entity, request.status(), user, request.reason());
-        recalculationService.markCurrentAndFuturePlans();
-        RequestResponse response = mapper.toRequest(requests.saveAndFlush(entity));
-        capacityAlertService.recalculateFromToday();
-        return response;
+        throw new ForbiddenOperationException("Alterações manuais de estado foram desativadas. Use o fluxo operacional correspondente.");
     }
 
     @Transactional
@@ -371,7 +392,6 @@ public class WheelIntakeRequestService {
         entity.setPlanningLocked(Boolean.TRUE.equals(request.planningLocked()));
         entity.setUpdatedBy(user.actorLabel());
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, entity.getId(), "PRIORITY_UPDATED", user.actorLabel(),
                 "Priority/lock changed. " + (request.reason() == null ? "" : request.reason()));
         return mapper.toRequest(requests.saveAndFlush(entity));
@@ -390,11 +410,16 @@ public class WheelIntakeRequestService {
 
     private RequestResponse persistCreated(WheelIntakeRequestEntity entity, AuthenticatedUser user) {
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        recordStatus(saved, null, LifecycleStatus.REGISTERED, user.id(), user.actorLabel(), "Pedido registado.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, user.id(), user.actorLabel(), "Pedido comunicado.");
         recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculateFromToday();
         auditService.record(null, saved.getId(), "REQUEST_CREATED", user.actorLabel(), "Request created.");
+        logCommunicatedRequest(saved);
+        publishRequestCommunicated(saved);
         return mapper.toRequest(saved);
+    }
+
+    private void publishRequestCommunicated(WheelIntakeRequestEntity request) {
+        eventPublisher.publishEvent(new WheelIntakeRequestCommunicatedEvent(request.getId(), request.getSource()));
     }
 
     private WheelIntakeRequestEntity createEntity(RequestSource source, String externalSourceReference, String externalMessageId,
@@ -434,10 +459,22 @@ public class WheelIntakeRequestService {
         entity.setRequestedFactoryPickupWindowStart(pickupStart);
         entity.setRequestedFactoryPickupWindowEnd(pickupEnd);
         entity.setNotes(blankToNull(notes));
-        entity.setLifecycleStatus(LifecycleStatus.REGISTERED);
+        entity.setLifecycleStatus(LifecycleStatus.COMMUNICATED);
         entity.setCreatedBy(actor);
         entity.setUpdatedBy(actor);
         return entity;
+    }
+
+    private void logCommunicatedRequest(WheelIntakeRequestEntity request) {
+        LOGGER.info("Wheel intake request communicated requestId={} requestCode={} source={} driverId={} identityId={} totalQuantity={} availableAt={} deadlineAt={}",
+                request.getId(),
+                request.getRequestCode(),
+                request.getSource(),
+                request.getDriver() == null ? null : request.getDriver().getId(),
+                request.getSubmittedByIdentity() == null ? null : request.getSubmittedByIdentity().getId(),
+                request.getExpectedWheelQuantity(),
+                request.getExpectedFactoryDropOffWindowEnd(),
+                request.getRequestedFactoryPickupWindowStart());
     }
 
     private void applyUpdate(WheelIntakeRequestEntity entity, RequestUpdateRequest update, boolean admin, String actor) {

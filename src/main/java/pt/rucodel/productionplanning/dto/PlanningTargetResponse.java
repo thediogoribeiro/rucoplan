@@ -10,6 +10,7 @@ public record PlanningTargetResponse(
         int regularDailyCapacity,
         LocalDate effectiveFrom,
         String createdBy,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        String source
 ) {
 }

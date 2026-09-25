@@ -19,7 +19,7 @@ public class ApiMapper {
 
     public DriverResponse toDriver(DriverEntity entity) {
         return new DriverResponse(entity.getId(), entity.getDriverCode(), entity.getExternalId(),
-                entity.getName(), entity.isActive(), entity.getVersion());
+                entity.getRucofiId(), entity.getName(), entity.isActive(), entity.getVersion());
     }
 
     public CustomerResponse toCustomer(CustomerReferenceEntity entity) {
@@ -65,6 +65,9 @@ public class ApiMapper {
                 entity.getRequestedFactoryPickupWindowStart(),
                 entity.getRequestedFactoryPickupWindowEnd(),
                 entity.getActualFactoryArrivalAt(),
+                entity.getArrivalConfirmedAt(),
+                entity.getArrivalConfirmedBy(),
+                entity.getArrivalConfirmationSource(),
                 entity.getActualPickupFromFactoryAt(),
                 entity.getRucopiProductionJobId(),
                 entity.getNotes(),
@@ -136,12 +139,18 @@ public class ApiMapper {
                 entity.getGenerationTrigger(),
                 entity.getCapacityUsed(),
                 entity.getTargetUsed(),
+                entity.getMinimumTargetSnapshot(),
+                entity.getMaximumTargetSnapshot(),
                 entity.getTotalKnownWheels(),
                 entity.getTotalPlanned(),
+                entity.getTotalCompleted(),
+                entity.getTotalRemaining(),
                 entity.getTotalWaitingForArrival(),
                 entity.getTotalFutureWorkload(),
                 entity.getTotalAtRisk(),
                 entity.getTotalOverCapacity(),
+                entity.getOvertimeQuantity(),
+                entity.getOvertimeQuantity() > 0,
                 entity.isFallbackEstimatesUsed(),
                 entity.isRequiresRecalculation(),
                 entity.getWarning(),

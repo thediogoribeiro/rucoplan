@@ -14,6 +14,8 @@ public interface CustomerReferenceRepository extends JpaRepository<CustomerRefer
 
     Optional<CustomerReferenceEntity> findByCustomerNumber(Integer customerNumber);
 
+    Optional<CustomerReferenceEntity> findByCustomerCode(String customerCode);
+
     List<CustomerReferenceEntity> findByNameIgnoreCase(String name);
 
     List<CustomerReferenceEntity> findByActiveTrueAndNormalizedNameOrderByNameAscIdAsc(String normalizedName);

@@ -23,10 +23,12 @@ public class BootstrapAdminConfig {
                                      @Value("${app.bootstrap-admin.password:}") String password,
                                      @Value("${app.bootstrap-admin.display-name:Administrador}") String displayName) {
         return args -> {
-            if (!enabled) {
+            boolean credentialsPresent = username != null && !username.isBlank()
+                    && password != null && !password.isBlank();
+            if (!enabled && !credentialsPresent) {
                 return;
             }
-            if (username == null || username.isBlank() || password == null || password.isBlank()) {
+            if (!credentialsPresent) {
                 LOGGER.warn("Bootstrap admin is enabled but username/password are missing; no user was created.");
                 return;
             }

@@ -2,6 +2,7 @@ package pt.rucodel.productionplanning.security;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -9,11 +10,13 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import pt.rucodel.productionplanning.controller.AuthController;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.exception.InvalidRequestException;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 
 @Component
@@ -32,10 +35,22 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             authenticate(header.substring("Bearer ".length()).trim());
-        } else if (request.getRequestURI().endsWith("/stream") && request.getParameter("access_token") != null) {
-            authenticate(request.getParameter("access_token"));
+        } else if (request.getRequestURI().endsWith("/stream")) {
+            streamAuthCookie(request).ifPresent(this::authenticate);
         }
         filterChain.doFilter(request, response);
+    }
+
+    private java.util.Optional<String> streamAuthCookie(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) {
+            return java.util.Optional.empty();
+        }
+        return Arrays.stream(cookies)
+                .filter(cookie -> AuthController.STREAM_AUTH_COOKIE.equals(cookie.getName()))
+                .map(Cookie::getValue)
+                .filter(value -> value != null && !value.isBlank())
+                .findFirst();
     }
 
     private void authenticate(String token) {

@@ -23,6 +23,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -169,28 +170,147 @@ class ApplicationFlowIntegrationTest {
     }
 
     @Test
+    void systemDiagnosticsRequireAdminAndAreSanitized() throws Exception {
+        String driverToken = login("driver1");
+        String adminToken = login("admin");
+
+        mockMvc.perform(get("/api/v1/admin/system-diagnostics"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Content-Type", org.hamcrest.Matchers.containsString("application/problem+json")))
+                .andExpect(header().exists("X-Correlation-ID"))
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))
+                .andExpect(jsonPath("$.correlationId").isNotEmpty());
+
+        mockMvc.perform(get("/api/v1/admin/system-diagnostics")
+                        .header("Authorization", bearer(driverToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(header().string("Content-Type", org.hamcrest.Matchers.containsString("application/problem+json")))
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"))
+                .andExpect(jsonPath("$.correlationId").isNotEmpty());
+
+        String response = mockMvc.perform(get("/api/v1/admin/system-diagnostics")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.backend.status").value("UP"))
+                .andExpect(jsonPath("$.database.status").value("UP"))
+                .andExpect(jsonPath("$.database.schemaStatus").value("UP"))
+                .andExpect(jsonPath("$.planning.confirmedRequestsErrorCode").doesNotExist())
+                .andExpect(jsonPath("$.planning.openPlansErrorCode").doesNotExist())
+                .andExpect(jsonPath("$.planning.planLinesErrorCode").doesNotExist())
+                .andExpect(jsonPath("$.planning.targetsUsed.minimumDailyTarget").value(150))
+                .andExpect(jsonPath("$.planning.targetsUsed.regularDailyCapacity").value(180))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response.toLowerCase()).doesNotContain("jdbc", "password", "username");
+
+        mockMvc.perform(post("/api/v1/auth/stream-session")
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isNoContent())
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("RUCOPLAN_STREAM_AUTH=")))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("access_token"))));
+    }
+
+    @Test
+    void recalculationUsesDatedEndpointAndStaticAssetsAreRevalidated() throws Exception {
+        String adminToken = login("admin");
+
+        mockMvc.perform(post("/api/v1/admin/production-plans/{date}/recalculate", date)
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.planningDate").value(date.toString()));
+
+        mockMvc.perform(post("/api/v1/admin/production-plans/recalculate")
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().is4xxClientError());
+
+        mockMvc.perform(get("/admin.html"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("max-age=0")))
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("must-revalidate")));
+    }
+
+    @Test
     void administratorCanConfirmArrivalQuantityAndProductionStatus() throws Exception {
         String driverToken = login("driver1");
         String adminToken = login("admin");
+        String otherDriverToken = login("driver2");
         JsonNode created = createDriverRequest(driverToken, customerOne, 5);
         long version = created.get("version").asLong();
 
-        String arrivedJson = mockMvc.perform(post("/api/v1/admin/requests/{id}/arrival", created.get("id").asText())
+        mockMvc.perform(get("/api/v1/admin/factory-arrivals?status=COMMUNICATED")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(created.get("id").asText()))
+                .andExpect(jsonPath("$[0].lifecycleStatus").value("COMMUNICATED"));
+
+        mockMvc.perform(post("/api/v1/driver/requests/{id}/arrival", created.get("id").asText())
+                        .header("Authorization", bearer(otherDriverToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "actualArrivalAt": "2026-09-02T09:10:00+01:00",
+                                  "version": %d
+                                }
+                                """.formatted(version)))
+                .andExpect(status().isForbidden());
+
+        String arrivedJson = mockMvc.perform(post("/api/v1/admin/factory-arrivals/{id}/confirm", created.get("id").asText())
                         .header("Authorization", bearer(adminToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "actualFactoryArrivalAt": "2026-09-02T09:15:00+01:00",
+                                  "actualArrivalAt": "2026-09-02T09:15:00+01:00",
                                   "actualReceivedWheelQuantity": 4,
                                   "acknowledgeDiscrepancy": false,
                                   "reason": "Receção física",
                                   "version": %d
                                 }
-                                """.formatted(version)))
+                """.formatted(version)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lifecycleStatus").value("ARRIVED_AT_FACTORY"))
+                .andExpect(jsonPath("$.lifecycleStatus").value("AT_FACTORY"))
+                .andExpect(jsonPath("$.arrivalConfirmedAt").isNotEmpty())
+                .andExpect(jsonPath("$.arrivalConfirmedBy").isNotEmpty())
+                .andExpect(jsonPath("$.arrivalConfirmationSource").value("ADMIN"))
                 .andExpect(jsonPath("$.quantityDiscrepancy").value(true))
                 .andReturn().getResponse().getContentAsString();
+
+        mockMvc.perform(post("/api/v1/admin/factory-arrivals/{id}/confirm", created.get("id").asText())
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "actualArrivalAt": "2026-09-02T09:15:00+01:00",
+                                  "version": %d
+                                }
+                                """.formatted(version)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lifecycleStatus").value("AT_FACTORY"))
+                .andExpect(jsonPath("$.actualFactoryArrivalAt").value("2026-09-02T08:15:00Z"));
+
+        mockMvc.perform(get("/api/v1/admin/factory-arrivals?status=COMMUNICATED")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        JsonNode ownArrival = createDriverRequest(driverToken, customerOne, 2);
+        mockMvc.perform(post("/api/v1/driver/requests/{id}/arrival", ownArrival.get("id").asText())
+                        .header("Authorization", bearer(driverToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "actualArrivalAt": "2026-09-02T09:20:00+01:00",
+                                  "version": %d
+                                }
+                                """.formatted(ownArrival.get("version").asLong())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lifecycleStatus").value("AT_FACTORY"))
+                .andExpect(jsonPath("$.arrivalConfirmationSource").value("DRIVER"));
 
         long arrivedVersion = objectMapper.readTree(arrivedJson).get("version").asLong();
         String quantityJson = mockMvc.perform(post("/api/v1/admin/requests/{id}/received-quantity", created.get("id").asText())
@@ -219,8 +339,7 @@ class ApplicationFlowIntegrationTest {
                                   "version": %d
                                 }
                                 """.formatted(statusVersion)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lifecycleStatus").value("IN_PRODUCTION"));
+                .andExpect(status().is4xxClientError());
     }
 
     @Test

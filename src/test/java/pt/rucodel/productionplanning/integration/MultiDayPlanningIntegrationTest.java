@@ -40,6 +40,7 @@ class MultiDayPlanningIntegrationTest {
     @jakarta.annotation.Resource TelegramIntakeDraftRepository drafts;
     @jakarta.annotation.Resource TelegramInboundUpdateRepository inboundUpdates;
     @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
+    @jakarta.annotation.Resource ApplicationUserRepository users;
 
     private final ZoneId zone = ZoneId.of("Europe/Lisbon");
     private final LocalDate day = LocalDate.of(2099, 9, 10);
@@ -64,6 +65,7 @@ class MultiDayPlanningIntegrationTest {
         requests.deleteAll();
         settings.deleteAll();
         targetConfigurations.deleteAll();
+        users.deleteAll();
         customers.deleteAll();
         drivers.deleteAll();
 
@@ -78,7 +80,38 @@ class MultiDayPlanningIntegrationTest {
     void targetMinimumAboveMaximumIsRejected() {
         assertThatThrownBy(() -> targets.create(new PlanningTargetRequest(201, 200, day), "TEST"))
                 .isInstanceOf(InvalidRequestException.class)
-                .hasMessageContaining("Target mínimo diário não pode ser superior");
+                .hasMessageContaining("O target mínimo não pode ser superior");
+    }
+
+    @Test
+    void defaultTargetsAreUsedWhenNoConfigurationExists() {
+        assertThat(targetConfigurations.findAll()).isEmpty();
+        ProductionTargetConfigurationEntity fallback = targets.effectiveFor(day);
+        assertThat(fallback.getMinimumDailyTarget()).isEqualTo(150);
+        assertThat(fallback.getRegularDailyCapacity()).isEqualTo(180);
+        assertThat(fallback.isSystemDefault()).isTrue();
+
+        request(customerX, 80, day, day.plusDays(1), RequestSource.WEB);
+        DailyProductionPlanResponse plan = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+
+        assertThat(plan.minimumDailyTarget()).isEqualTo(150);
+        assertThat(plan.regularDailyCapacity()).isEqualTo(180);
+        assertThat(plan.totalPlanned()).isEqualTo(80);
+        assertThat(plan.warning()).contains("Target mínimo não atingido");
+    }
+
+    @Test
+    void defaultTargetsAreReducedByHalfOnSaturday() {
+        assertThat(targetConfigurations.findAll()).isEmpty();
+        LocalDate saturday = LocalDate.of(2099, 9, 12);
+        request(customerX, 95, saturday, saturday, RequestSource.TELEGRAM);
+
+        DailyProductionPlanResponse saturdayPlan = planning.recalculate(saturday, GenerationTrigger.MANUAL, admin);
+
+        assertThat(saturdayPlan.minimumDailyTarget()).isEqualTo(75);
+        assertThat(saturdayPlan.regularDailyCapacity()).isEqualTo(90);
+        assertThat(saturdayPlan.totalPlanned()).isEqualTo(95);
+        assertThat(saturdayPlan.overtimeQuantity()).isEqualTo(5);
     }
 
     @Test
@@ -111,9 +144,9 @@ class MultiDayPlanningIntegrationTest {
 
         planning.recalculate(day, GenerationTrigger.MANUAL, admin);
 
-        assertThat(plan(day).totalPlanned()).isEqualTo(150);
-        assertThat(plan(day.plusDays(1)).totalPlanned()).isEqualTo(150);
-        assertThat(plan(day.plusDays(2)).totalPlanned()).isEqualTo(150);
+        assertThat(plan(day).totalPlanned()).isEqualTo(200);
+        assertThat(plan(day.plusDays(1)).totalPlanned()).isEqualTo(200);
+        assertThat(plan(day.plusDays(2)).totalPlanned()).isEqualTo(50);
 
         planItems.deleteAll();
         plans.deleteAll();
@@ -124,7 +157,7 @@ class MultiDayPlanningIntegrationTest {
         planning.recalculate(day, GenerationTrigger.MANUAL, admin);
 
         DailyProductionPlanResponse today = plan(day);
-        assertThat(today.totalPlanned()).isEqualTo(100);
+        assertThat(today.totalPlanned()).isEqualTo(170);
         assertThat(today.lines()).extracting(DailyProductionPlanLineResponse::requestId)
                 .startsWith(urgent.getId());
         assertThat(today.lines()).anySatisfy(line -> {
@@ -146,6 +179,94 @@ class MultiDayPlanningIntegrationTest {
     }
 
     @Test
+    void telegramRequestWithWashedAndNormalWheelsIsPlannedToMaximumThenRemainder() {
+        LocalDate firstDay = LocalDate.of(2026, 9, 24);
+        LocalDate secondDay = LocalDate.of(2026, 9, 25);
+        createTargets(150, 180, firstDay);
+        WheelIntakeRequestEntity request = typedRequest(customerX, Map.of(
+                WheelType.BIPARTITE, 0,
+                WheelType.WASHED, 30,
+                WheelType.NORMAL, 200
+        ), firstDay, "05:30", "06:00", secondDay, "09:00", "14:00", RequestSource.TELEGRAM);
+        request.setCustomerNameSnapshot("teste");
+        request = requests.saveAndFlush(request);
+        UUID requestId = request.getId();
+
+        planning.recalculate(firstDay, GenerationTrigger.MANUAL, admin);
+
+        DailyProductionPlanResponse day24 = plan(firstDay);
+        DailyProductionPlanResponse day25 = plan(secondDay);
+        assertThat(day24.totalPlanned()).isEqualTo(180);
+        assertThat(day24.minimumDailyTarget()).isEqualTo(150);
+        assertThat(day24.regularDailyCapacity()).isEqualTo(180);
+        assertThat(day24.overtimeQuantity()).isZero();
+        assertThat(day24.lines()).singleElement().satisfies(line -> {
+            assertThat(line.requestId()).isEqualTo(requestId);
+            assertThat(line.source()).isEqualTo(RequestSource.TELEGRAM);
+            assertThat(line.bipartiteQuantity()).isZero();
+            assertThat(line.washedQuantity()).isEqualTo(30);
+            assertThat(line.normalQuantity()).isEqualTo(150);
+            assertThat(line.totalQuantity()).isEqualTo(180);
+            assertThat(line.availableAt()).isEqualTo(at(firstDay, "06:00"));
+            assertThat(line.deadlineAt()).isEqualTo(at(secondDay, "09:00"));
+        });
+
+        assertThat(day25.totalPlanned()).isEqualTo(50);
+        assertThat(day25.minimumDailyTarget()).isEqualTo(150);
+        assertThat(day25.regularDailyCapacity()).isEqualTo(180);
+        assertThat(day25.overtimeQuantity()).isZero();
+        assertThat(day25.warning()).contains("Target mínimo não atingido");
+        assertThat(day25.lines()).singleElement().satisfies(line -> {
+            assertThat(line.requestId()).isEqualTo(requestId);
+            assertThat(line.bipartiteQuantity()).isZero();
+            assertThat(line.washedQuantity()).isZero();
+            assertThat(line.normalQuantity()).isEqualTo(50);
+            assertThat(line.totalQuantity()).isEqualTo(50);
+        });
+
+        assertThat(day24.wheelQuantities()).extracting(WheelQuantityDto::quantity).containsExactly(0, 30, 150);
+        assertThat(day25.wheelQuantities()).extracting(WheelQuantityDto::quantity).containsExactly(0, 0, 50);
+    }
+
+    @Test
+    void bipartiteDeadlinesAreAdjustedByFifteenBusinessDaysWithoutChangingOtherTypes() {
+        createTargets(0, 200, day);
+        WheelIntakeRequestEntity request = typedRequest(customerX, Map.of(
+                WheelType.BIPARTITE, 5,
+                WheelType.WASHED, 7,
+                WheelType.NORMAL, 9
+        ), day, "09:00", "10:00", day.plusDays(1), "09:00", "14:00", RequestSource.WEB);
+
+        planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+
+        DailyProductionPlanResponse initial = plan(day);
+        assertThat(initial.lines()).singleElement().satisfies(line -> {
+            assertThat(line.washedQuantity()).isEqualTo(7);
+            assertThat(line.normalQuantity()).isEqualTo(9);
+            assertThat(line.bipartiteQuantity()).isZero();
+            assertThat(line.deadlineAt()).isEqualTo(at(day.plusDays(1), "09:00"));
+        });
+
+        LocalDate adjustedDate = LocalDate.of(2099, 10, 1);
+        DailyProductionPlanResponse adjusted = plan(adjustedDate);
+        assertThat(adjusted.lines()).singleElement().satisfies(line -> {
+            assertThat(line.requestId()).isEqualTo(request.getId());
+            assertThat(line.bipartiteQuantity()).isEqualTo(5);
+            assertThat(line.washedQuantity()).isZero();
+            assertThat(line.normalQuantity()).isZero();
+            assertThat(line.deadlineAt()).isEqualTo(at(adjustedDate, "09:00"));
+            assertThat(line.priorityExplanation()).contains("Prazo mínimo de 15 dias úteis");
+        });
+        WheelIntakeRequestEntity persisted = requests.findById(request.getId()).orElseThrow();
+        assertThat(persisted.getWheelQuantities()).anySatisfy(quantity -> {
+            assertThat(quantity.getWheelType()).isEqualTo(WheelType.BIPARTITE);
+            assertThat(quantity.getRequestedDeadlineAt()).isEqualTo(at(day.plusDays(1), "09:00"));
+            assertThat(quantity.getEffectiveDeadlineAt()).isEqualTo(at(adjustedDate, "09:00"));
+            assertThat(quantity.getDeadlineAdjustmentReason()).contains("15 dias úteis");
+        });
+    }
+
+    @Test
     void deadlinesOverrideBalancingAndOvertimeAlertsUseMaximumTarget() {
         createTargets(100, 200, day);
         request(customerX, 230, day, day, RequestSource.WEB);
@@ -156,12 +277,8 @@ class MultiDayPlanningIntegrationTest {
 
         assertThat(plan(day).totalPlanned()).isEqualTo(230);
         assertThat(plan(day).overtimeQuantity()).isEqualTo(30);
-        assertThat(capacityAlerts.findByStatusInOrderByAffectedDateAscCreatedAtAsc(List.of(CapacityAlertStatus.ACTIVE)))
-                .singleElement()
-                .satisfies(alert -> {
-                    assertThat(alert.getDeficit()).isEqualTo(30);
-                    assertThat(alert.getMessage()).contains("Horas extra necessárias para 2099-09-10");
-                });
+        assertThat(plan(day).warning()).contains("Horas extra necessárias", "Excesso estimado: 30");
+        assertThat(capacityAlerts.findAll()).isEmpty();
 
         planItems.deleteAll();
         plans.deleteAll();
@@ -171,6 +288,93 @@ class MultiDayPlanningIntegrationTest {
         planning.recalculate(day, GenerationTrigger.MANUAL, admin);
         assertThat(plan(day).overtimeQuantity()).isZero();
         assertThat(capacityAlerts.findAll()).isEmpty();
+    }
+
+    @Test
+    void productionCalendarAppliesSaturdayHalfDayAndSkipsSunday() {
+        createTargets(100, 200, day);
+        LocalDate saturday = LocalDate.of(2099, 9, 12);
+        LocalDate sunday = LocalDate.of(2099, 9, 13);
+        LocalDate monday = LocalDate.of(2099, 9, 14);
+
+        request(customerX, 125, saturday, saturday, RequestSource.TELEGRAM);
+        planning.recalculate(saturday, GenerationTrigger.MANUAL, admin);
+
+        DailyProductionPlanResponse saturdayPlan = plan(saturday);
+        assertThat(saturdayPlan.minimumDailyTarget()).isEqualTo(50);
+        assertThat(saturdayPlan.regularDailyCapacity()).isEqualTo(100);
+        assertThat(saturdayPlan.totalPlanned()).isEqualTo(125);
+        assertThat(saturdayPlan.overtimeQuantity()).isEqualTo(25);
+        assertThat(saturdayPlan.warning()).contains("Excesso estimado: 25");
+
+        request(customerY, 30, sunday, monday, RequestSource.WEB);
+        planning.recalculate(sunday, GenerationTrigger.MANUAL, admin);
+
+        DailyProductionPlanResponse sundayPlan = plan(sunday);
+        assertThat(sundayPlan.lines()).isEmpty();
+        assertThat(sundayPlan.warning()).contains("Domingo não é dia de produção");
+        assertThat(plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(sunday)).isEmpty();
+        assertThat(plan(monday).lines()).extracting(DailyProductionPlanLineResponse::customerName)
+                .contains("Cliente Y");
+    }
+
+    @Test
+    void saturdayAfternoonArrivalsMoveToMondayAndSundayDeadlinesMoveToSaturday() {
+        createTargets(0, 200, day);
+        LocalDate saturday = LocalDate.of(2099, 9, 12);
+        LocalDate sunday = LocalDate.of(2099, 9, 13);
+        LocalDate monday = LocalDate.of(2099, 9, 14);
+
+        WheelIntakeRequestEntity saturdayAfternoon = typedRequest(customerX, Map.of(WheelType.NORMAL, 20),
+                saturday, "15:00", "15:30", monday, "18:00", "19:00", RequestSource.WEB);
+        WheelIntakeRequestEntity saturdayClosing = typedRequest(customerZ, Map.of(WheelType.NORMAL, 5),
+                saturday, "12:30", "13:00", monday, "18:00", "19:00", RequestSource.WEB);
+        WheelIntakeRequestEntity sundayDeadline = typedRequest(customerY, Map.of(WheelType.NORMAL, 10),
+                saturday, "09:00", "10:00", sunday, "12:00", "13:00", RequestSource.WEB);
+
+        planning.recalculate(saturday, GenerationTrigger.MANUAL, admin);
+
+        assertThat(plan(saturday).lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .contains(sundayDeadline.getId())
+                .doesNotContain(saturdayAfternoon.getId(), saturdayClosing.getId());
+        assertThat(plan(monday).lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .contains(saturdayAfternoon.getId(), saturdayClosing.getId());
+    }
+
+    @Test
+    void weekdayArrivalsAfterProductionWindowMoveToNextProductionDay() {
+        createTargets(0, 200, day);
+
+        WheelIntakeRequestEntity lateWeekday = typedRequest(customerX, Map.of(WheelType.NORMAL, 10),
+                day, "21:30", "22:00", day.plusDays(1), "18:00", "19:00", RequestSource.WEB);
+        WheelIntakeRequestEntity afterHours = typedRequest(customerY, Map.of(WheelType.NORMAL, 15),
+                day, "22:00", "22:30", day.plusDays(1), "18:00", "19:00", RequestSource.WEB);
+
+        planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+
+        assertThat(plan(day).lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .doesNotContain(lateWeekday.getId(), afterHours.getId());
+        assertThat(plan(day.plusDays(1)).lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .contains(lateWeekday.getId(), afterHours.getId());
+    }
+
+    @Test
+    void impossibleDeadlineIsExplicitlyFlaggedInsteadOfBeingOmitted() {
+        createTargets(0, 200, day);
+        LocalDate sunday = LocalDate.of(2099, 9, 13);
+        LocalDate monday = LocalDate.of(2099, 9, 14);
+        WheelIntakeRequestEntity impossible = request(customerX, 12, sunday, sunday, RequestSource.TELEGRAM);
+
+        planning.recalculate(sunday, GenerationTrigger.MANUAL, admin);
+
+        DailyProductionPlanResponse mondayPlan = plan(monday);
+        assertThat(mondayPlan.lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .contains(impossible.getId());
+        assertThat(mondayPlan.warning()).contains("Prazo impossível");
+        assertThat(mondayPlan.lines()).anySatisfy(line -> {
+            assertThat(line.requestId()).isEqualTo(impossible.getId());
+            assertThat(line.riskClassification()).isEqualTo(RiskClassification.AT_RISK);
+        });
     }
 
     @Test
@@ -208,9 +412,9 @@ class MultiDayPlanningIntegrationTest {
     void planningClosureAndCarryOverKeepWheelTypeDetailsAndTargetsUseAggregateTotal() {
         createTargets(20, 22, day);
         WheelIntakeRequestEntity request = typedRequest(customerX, Map.of(
-                WheelType.BIPARTITE, 4,
+                WheelType.BIPARTITE, 0,
                 WheelType.WASHED, 6,
-                WheelType.NORMAL, 15
+                WheelType.NORMAL, 19
         ), day, day, RequestSource.WEB);
 
         DailyProductionPlanResponse created = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
@@ -220,15 +424,15 @@ class MultiDayPlanningIntegrationTest {
         assertThat(created.lines()).singleElement().satisfies(line -> {
             assertThat(line.requestId()).isEqualTo(request.getId());
             assertThat(line.wheelQuantities()).extracting(PlanLineWheelQuantityResponse::plannedQuantity)
-                    .containsExactly(4, 6, 15);
+                    .containsExactly(0, 6, 19);
         });
 
         DailyProductionPlanLineResponse line = created.lines().getFirst();
         ReconciliationRequest close = new ReconciliationRequest(created.version(), null, List.of(
                 new ReconciliationLineRequest(line.id(), 17, 8, List.of(
-                        new ReconciliationLineWheelQuantityRequest(WheelType.BIPARTITE, 3, 1),
+                        new ReconciliationLineWheelQuantityRequest(WheelType.BIPARTITE, 0, 0),
                         new ReconciliationLineWheelQuantityRequest(WheelType.WASHED, 4, 2),
-                        new ReconciliationLineWheelQuantityRequest(WheelType.NORMAL, 10, 5)
+                        new ReconciliationLineWheelQuantityRequest(WheelType.NORMAL, 13, 6)
                 ), null, line.version())
         ));
 
@@ -237,14 +441,14 @@ class MultiDayPlanningIntegrationTest {
         assertThat(closed.totalCompleted()).isEqualTo(17);
         assertThat(closed.totalRemaining()).isEqualTo(8);
         WheelIntakeRequestEntity updated = requests.findById(request.getId()).orElseThrow();
-        assertThat(updated.completedWheelQuantity(WheelType.BIPARTITE)).isEqualTo(3);
+        assertThat(updated.completedWheelQuantity(WheelType.BIPARTITE)).isZero();
         assertThat(updated.completedWheelQuantity(WheelType.WASHED)).isEqualTo(4);
-        assertThat(updated.completedWheelQuantity(WheelType.NORMAL)).isEqualTo(10);
+        assertThat(updated.completedWheelQuantity(WheelType.NORMAL)).isEqualTo(13);
 
         DailyProductionPlanLineResponse carried = plan(day.plusDays(1)).lines().getFirst();
         assertThat(carried.carriedOver()).isTrue();
         assertThat(carried.wheelQuantities()).extracting(PlanLineWheelQuantityResponse::plannedQuantity)
-                .containsExactly(1, 2, 5);
+                .containsExactly(0, 2, 6);
         assertThat(requests.count()).isEqualTo(1);
     }
 
@@ -263,7 +467,9 @@ class MultiDayPlanningIntegrationTest {
         DailyProductionPlanResponse closed = planning.close(day, closePayload(created, List.of(10)), admin);
         assertThat(closed.status()).isEqualTo(ProductionPlanStatus.CLOSED);
 
-        planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+        assertThatThrownBy(() -> planning.recalculate(day, GenerationTrigger.MANUAL, admin))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("já está fechado");
         assertThat(plan(day).versionNumber()).isEqualTo(closed.versionNumber());
 
         assertThatThrownBy(() -> planning.reopen(day, new ReopenPlanRequest(closed.version(), " "), admin))
@@ -314,17 +520,27 @@ class MultiDayPlanningIntegrationTest {
 
     private WheelIntakeRequestEntity typedRequest(CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
                                                   LocalDate availableDate, LocalDate dueDate, RequestSource source) {
+        return typedRequest(customer, quantities, availableDate, "09:00", "10:00", dueDate, "18:00", "19:00", source);
+    }
+
+    private WheelIntakeRequestEntity typedRequest(CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                  LocalDate availableDate, String availableStart, String availableEnd,
+                                                  LocalDate dueDate, String dueStart, String dueEnd, RequestSource source) {
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
         entity.setSource(source);
         entity.setDriver(driver);
         entity.setCustomer(customer);
         entity.setCustomerNameSnapshot(customer.getName());
         entity.replaceWheelQuantities(quantities);
-        entity.setExpectedFactoryDropOffWindowStart(at(availableDate, "09:00"));
-        entity.setExpectedFactoryDropOffWindowEnd(at(availableDate, "10:00"));
-        entity.setRequestedFactoryPickupWindowStart(at(dueDate, "18:00"));
-        entity.setRequestedFactoryPickupWindowEnd(at(dueDate, "19:00"));
-        entity.setLifecycleStatus(LifecycleStatus.REGISTERED);
+        entity.setExpectedFactoryDropOffWindowStart(at(availableDate, availableStart));
+        entity.setExpectedFactoryDropOffWindowEnd(at(availableDate, availableEnd));
+        entity.setActualFactoryArrivalAt(at(availableDate, availableEnd));
+        entity.setArrivalConfirmedAt(at(availableDate, availableEnd));
+        entity.setArrivalConfirmedBy("TEST");
+        entity.setArrivalConfirmationSource("TEST");
+        entity.setRequestedFactoryPickupWindowStart(at(dueDate, dueStart));
+        entity.setRequestedFactoryPickupWindowEnd(at(dueDate, dueEnd));
+        entity.setLifecycleStatus(LifecycleStatus.AT_FACTORY);
         entity.setCreatedBy("TEST");
         entity.setUpdatedBy("TEST");
         return requests.saveAndFlush(entity);

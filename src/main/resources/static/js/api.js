@@ -16,9 +16,16 @@ function clearSession() {
   localStorage.removeItem(SESSION_KEY);
 }
 
+function createCorrelationId() {
+  return window.crypto?.randomUUID ? window.crypto.randomUUID() : `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  headers.set('Accept', 'application/json');
+  headers.set('Accept', 'application/json, application/problem+json');
+  if (!headers.has('X-Correlation-ID')) {
+    headers.set('X-Correlation-ID', createCorrelationId());
+  }
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -26,18 +33,40 @@ async function request(path, options = {}) {
   if (options.auth !== false && current?.token) {
     headers.set('Authorization', `Bearer ${current.token}`);
   }
-  const response = await fetch(path, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers, credentials: options.credentials || 'same-origin' });
+  } catch (error) {
+    const networkError = new Error('Não foi possível contactar o servidor do RucoPlan.');
+    networkError.code = 'BACKEND_UNAVAILABLE';
+    networkError.status = 0;
+    networkError.endpoint = path;
+    networkError.correlationId = headers.get('X-Correlation-ID');
+    throw networkError;
+  }
   if (response.status === 401) {
     clearSession();
     if (!location.pathname.endsWith('/login.html')) location.replace('login.html');
   }
   if (!response.ok) {
-    let message = 'Erro inesperado.';
+    let message = response.status === 403
+      ? 'Não tem permissões para executar esta operação.'
+      : 'Erro inesperado.';
+    let payload = null;
     try {
-      const payload = await response.json();
-      message = [payload.message, ...(payload.details || [])].filter(Boolean).join(' ');
+      payload = await response.json();
+      message = [payload.detail, payload.message, ...(payload.details || [])].filter(Boolean).join(' ');
     } catch (_) {}
-    throw new Error(message);
+    const error = new Error(message);
+    error.code = payload?.code
+      || payload?.error
+      || (response.status === 401 ? 'UNAUTHORIZED' : response.status === 403 ? 'FORBIDDEN' : response.status === 503 ? 'BACKEND_UNAVAILABLE' : 'HTTP_ERROR');
+    error.correlationId = payload?.correlationId || response.headers.get('X-Correlation-ID') || headers.get('X-Correlation-ID');
+    error.status = response.status;
+    error.endpoint = path;
+    error.timestamp = payload?.timestamp || new Date().toISOString();
+    error.payload = payload;
+    throw error;
   }
   if (response.status === 204) return null;
   const contentType = response.headers.get('content-type') || '';
@@ -67,8 +96,10 @@ const api = {
     return current;
   },
   logout() {
-    clearSession();
-    location.replace('login.html');
+    request('/api/v1/auth/logout', { method: 'POST' }).catch(() => null).finally(() => {
+      clearSession();
+      location.replace('login.html');
+    });
   }
 };
 
@@ -144,13 +175,11 @@ function datetimeLocalValue(value) {
 }
 
 const statusLabels = {
-  REGISTERED: 'Registado',
-  ARRIVED_AT_FACTORY: 'Na fábrica',
+  COMMUNICATED: 'Comunicado',
+  AT_FACTORY: 'Na fábrica',
   IN_PRODUCTION: 'Em produção',
   READY_FOR_PICKUP: 'Pronto',
-  PICKED_UP_FROM_FACTORY: 'Levantado',
   CANCELLED: 'Cancelado',
-  CONFIRMED: 'Confirmado',
   TENTATIVE: 'Tentativo',
   WAITING_FOR_ARRIVAL: 'A aguardar chegada',
   ON_TRACK: 'Controlado',

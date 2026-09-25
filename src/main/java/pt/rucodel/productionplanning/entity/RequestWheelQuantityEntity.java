@@ -13,6 +13,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import pt.rucodel.productionplanning.domain.WheelType;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
@@ -42,6 +43,15 @@ public class RequestWheelQuantityEntity extends BaseEntity {
 
     @Column(name = "completed_quantity", nullable = false)
     private int completedQuantity;
+
+    @Column(name = "requested_deadline_at")
+    private OffsetDateTime requestedDeadlineAt;
+
+    @Column(name = "effective_deadline_at")
+    private OffsetDateTime effectiveDeadlineAt;
+
+    @Column(name = "deadline_adjustment_reason", length = 240)
+    private String deadlineAdjustmentReason;
 
     @Override
     protected void assignIdIfNecessary() {
@@ -84,5 +94,29 @@ public class RequestWheelQuantityEntity extends BaseEntity {
 
     public void setCompletedQuantity(int completedQuantity) {
         this.completedQuantity = completedQuantity;
+    }
+
+    public OffsetDateTime getRequestedDeadlineAt() {
+        return requestedDeadlineAt;
+    }
+
+    public void setRequestedDeadlineAt(OffsetDateTime requestedDeadlineAt) {
+        this.requestedDeadlineAt = requestedDeadlineAt;
+    }
+
+    public OffsetDateTime getEffectiveDeadlineAt() {
+        return effectiveDeadlineAt;
+    }
+
+    public void setEffectiveDeadlineAt(OffsetDateTime effectiveDeadlineAt) {
+        this.effectiveDeadlineAt = effectiveDeadlineAt;
+    }
+
+    public String getDeadlineAdjustmentReason() {
+        return deadlineAdjustmentReason;
+    }
+
+    public void setDeadlineAdjustmentReason(String deadlineAdjustmentReason) {
+        this.deadlineAdjustmentReason = deadlineAdjustmentReason;
     }
 }

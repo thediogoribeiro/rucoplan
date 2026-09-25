@@ -2,6 +2,7 @@ package pt.rucodel.productionplanning.service;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import pt.rucodel.productionplanning.domain.PlanningTargetDefaults;
 import pt.rucodel.productionplanning.dto.PlanningTargetRequest;
 import pt.rucodel.productionplanning.dto.PlanningTargetResponse;
 import pt.rucodel.productionplanning.entity.ProductionTargetConfigurationEntity;
@@ -22,19 +23,16 @@ public class ProductionTargetService {
     @Transactional(readOnly = true)
     public ProductionTargetConfigurationEntity effectiveFor(LocalDate date) {
         return targets.findFirstByEffectiveFromLessThanEqualOrderByEffectiveFromDescCreatedAtDesc(date)
-                .orElseGet(() -> {
-                    ProductionTargetConfigurationEntity fallback = new ProductionTargetConfigurationEntity();
-                    fallback.setMinimumDailyTarget(32);
-                    fallback.setRegularDailyCapacity(40);
-                    fallback.setEffectiveFrom(date);
-                    fallback.setCreatedBy("SYSTEM");
-                    return fallback;
-                });
+                .orElseGet(() -> systemDefaultTarget(date));
     }
 
     @Transactional(readOnly = true)
     public List<PlanningTargetResponse> list() {
-        return targets.findAllByOrderByEffectiveFromDescCreatedAtDesc().stream()
+        List<ProductionTargetConfigurationEntity> configured = targets.findAllByOrderByEffectiveFromDescCreatedAtDesc();
+        if (configured.isEmpty()) {
+            return List.of(toResponse(systemDefaultTarget(LocalDate.now())));
+        }
+        return configured.stream()
                 .map(this::toResponse)
                 .toList();
     }
@@ -53,13 +51,13 @@ public class ProductionTargetService {
 
     private void validate(int minimumDailyTarget, int regularDailyCapacity) {
         if (minimumDailyTarget < 0) {
-            throw new InvalidRequestException("Target mínimo diário tem de ser maior ou igual a zero.");
+            throw new InvalidRequestException("O target mínimo não pode ser negativo.");
         }
         if (regularDailyCapacity <= 0) {
-            throw new InvalidRequestException("Target máximo diário — capacidade regular tem de ser superior a zero.");
+            throw new InvalidRequestException("O target máximo deve ser superior a zero.");
         }
         if (minimumDailyTarget > regularDailyCapacity) {
-            throw new InvalidRequestException("Target mínimo diário não pode ser superior ao target máximo diário.");
+            throw new InvalidRequestException("O target mínimo não pode ser superior ao target máximo.");
         }
     }
 
@@ -70,7 +68,20 @@ public class ProductionTargetService {
                 entity.getRegularDailyCapacity(),
                 entity.getEffectiveFrom(),
                 entity.getCreatedBy(),
-                entity.getCreatedAt()
+                entity.getCreatedAt(),
+                entity.isSystemDefault()
+                        ? PlanningTargetDefaults.SOURCE_SYSTEM_DEFAULT
+                        : PlanningTargetDefaults.SOURCE_DATABASE
         );
+    }
+
+    private ProductionTargetConfigurationEntity systemDefaultTarget(LocalDate date) {
+        ProductionTargetConfigurationEntity fallback = new ProductionTargetConfigurationEntity();
+        fallback.setMinimumDailyTarget(PlanningTargetDefaults.MINIMUM_DAILY_TARGET);
+        fallback.setRegularDailyCapacity(PlanningTargetDefaults.REGULAR_DAILY_CAPACITY);
+        fallback.setEffectiveFrom(date == null ? PlanningTargetDefaults.EFFECTIVE_FROM : date);
+        fallback.setCreatedBy(PlanningTargetDefaults.CREATED_BY);
+        fallback.markSystemDefault();
+        return fallback;
     }
 }
