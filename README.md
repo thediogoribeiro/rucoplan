@@ -159,10 +159,16 @@ Required Heroku config vars:
 ```bash
 heroku config:set SPRING_PROFILES_ACTIVE=production
 heroku config:set APP_ENVIRONMENT=production
+heroku config:set APP_AUTH_MODE=DATABASE
 heroku config:set PUBLIC_BASE_URL=https://your-app.herokuapp.com
 heroku config:set TELEGRAM_ENABLED=false
 heroku config:set TELEGRAM_WEBHOOK_AUTO_REGISTER=false
 heroku config:set APP_TOKEN_SECRET=replace-with-a-long-random-secret
+heroku config:set APP_BOOTSTRAP_ADMIN_ENABLED=true
+heroku config:set APP_BOOTSTRAP_ADMIN_USERNAME=replace-with-admin-username
+heroku config:set APP_BOOTSTRAP_ADMIN_PASSWORD=replace-with-temporary-strong-password
+heroku config:set APP_BOOTSTRAP_ADMIN_DISPLAY_NAME=Administrador
+heroku config:set APP_BOOTSTRAP_ADMIN_SITES=PT,LUX
 ```
 
 Add PostgreSQL:
@@ -172,6 +178,8 @@ heroku addons:create heroku-postgresql:essential-0
 ```
 
 Heroku supplies `DATABASE_URL`; the application converts it to Spring JDBC settings at startup. A new production database receives only schema/reference data such as `PT` and `LUX`, plus explicitly configured bootstrap/admin data. Demo customers, drivers, requests, plans, factory arrivals, alerts and fake Telegram/WhatsApp conversations are not seeded in the `production` profile.
+
+Local login remains separate from Heroku login. Local development uses `APP_AUTH_MODE=LOCAL` and the existing local credential properties from `.env`; it does not query or create `app_user` records. Heroku production must use `APP_AUTH_MODE=DATABASE`; if the `production` profile is started with any other auth mode, startup fails clearly.
 
 First deploy:
 

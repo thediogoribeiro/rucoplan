@@ -45,14 +45,23 @@ public class TokenService {
     }
 
     public IssuedToken issue(ApplicationUserEntity user, ProductionSiteEntity site) {
+        return issue(new AuthenticatedAccount(
+                user.getId(),
+                user.getUsername(),
+                user.getDisplayName(),
+                user.getRole(),
+                user.getDriver() == null ? null : user.getDriver().getId()
+        ), site);
+    }
+
+    public IssuedToken issue(AuthenticatedAccount user, ProductionSiteEntity site) {
         OffsetDateTime expiresAt = OffsetDateTime.now(clock).plusMinutes(ttlMinutes);
-        UUID driverId = user.getDriver() == null ? null : user.getDriver().getId();
         Map<String, String> payload = new LinkedHashMap<>();
-        payload.put("sub", user.getId().toString());
-        payload.put("username", user.getUsername());
-        payload.put("displayName", user.getDisplayName());
-        payload.put("role", user.getRole().name());
-        payload.put("driverId", driverId == null ? "" : driverId.toString());
+        payload.put("sub", user.id().toString());
+        payload.put("username", user.username());
+        payload.put("displayName", user.displayName());
+        payload.put("role", user.role().name());
+        payload.put("driverId", user.driverId() == null ? "" : user.driverId().toString());
         payload.put("productionSiteId", site.getId().toString());
         payload.put("productionSiteCode", site.getCode().name());
         payload.put("productionSiteName", site.getDisplayName());

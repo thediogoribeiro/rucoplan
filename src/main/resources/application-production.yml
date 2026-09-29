@@ -1,5 +1,7 @@
 app:
   environment: ${APP_ENVIRONMENT:production}
+  auth:
+    mode: ${APP_AUTH_MODE:DATABASE}
   seed:
     enabled: false
 

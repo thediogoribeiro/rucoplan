@@ -13,6 +13,7 @@ spring:
 
 app:
   auth:
+    mode: DATABASE
     token-secret: test-secret-with-enough-length
   integrations:
     telegram:

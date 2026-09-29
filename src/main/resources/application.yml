@@ -37,6 +37,7 @@ app:
   display-name: ${APP_DISPLAY_NAME:Rucodel Production Planning}
   timezone: ${APP_BUSINESS_TIMEZONE:Europe/Lisbon}
   auth:
+    mode: ${APP_AUTH_MODE:LOCAL}
     token-secret: ${APP_TOKEN_SECRET:development-only-change-this-token-secret}
     token-ttl-minutes: ${APP_TOKEN_TTL_MINUTES:720}
   bootstrap-admin:
@@ -44,6 +45,7 @@ app:
     username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
     password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
     display-name: ${APP_BOOTSTRAP_ADMIN_DISPLAY_NAME:Administrador}
+    sites: ${APP_BOOTSTRAP_ADMIN_SITES:PT,LUX}
   planning:
     daily-cron: "0 0 7 * * *"
     recovery-hour: 7

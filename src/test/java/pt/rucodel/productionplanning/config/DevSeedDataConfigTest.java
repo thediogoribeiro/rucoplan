@@ -2,13 +2,10 @@ package pt.rucodel.productionplanning.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.CommandLineRunner;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
-import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
 import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
-import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 import pt.rucodel.productionplanning.repository.CustomerReferenceRepository;
 import pt.rucodel.productionplanning.repository.DailyProductionSettingsRepository;
 import pt.rucodel.productionplanning.repository.DriverRepository;
@@ -26,7 +23,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
@@ -36,25 +32,19 @@ class DevSeedDataConfigTest {
     @Test
     void seedReusesExistingDriverCodeWhenAdminUserIsMissing() throws Exception {
         DriverRepository drivers = mock(DriverRepository.class);
-        ApplicationUserRepository users = mock(ApplicationUserRepository.class);
         CustomerReferenceRepository customers = mock(CustomerReferenceRepository.class);
         WheelIntakeRequestRepository requests = mock(WheelIntakeRequestRepository.class);
         RequestStatusHistoryRepository history = mock(RequestStatusHistoryRepository.class);
         DailyProductionSettingsRepository settings = mock(DailyProductionSettingsRepository.class);
         ProductionSiteRepository productionSitesRepository = mock(ProductionSiteRepository.class);
         ProductionSiteService productionSites = mock(ProductionSiteService.class);
-        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         Clock clock = Clock.fixed(Instant.parse("2026-09-24T10:00:00Z"), ZoneId.of("Europe/Lisbon"));
         ProductionSiteEntity portugal = site();
 
-        when(passwordEncoder.encode(any())).thenReturn("encoded");
-        when(users.findByUsername(any())).thenReturn(Optional.empty());
-        when(users.save(any())).thenAnswer(invocation -> invocation.getArgument(0, ApplicationUserEntity.class));
         when(requests.existsByRequestCode(any())).thenReturn(true);
         when(settings.findByProductionSite_CodeAndSettingsKey(any(), any())).thenReturn(Optional.empty());
         when(productionSitesRepository.findByCode(ProductionSiteCode.PT)).thenReturn(Optional.of(portugal));
         doAnswer(invocation -> null).when(productionSites).ensureDriverAssociation(any(), any(), any(), any());
-        doAnswer(invocation -> null).when(productionSites).ensureUserAssociation(any(), any(), any());
 
         ProductionSiteEntity luxembourg = site(ProductionSiteCode.LUX);
         when(productionSitesRepository.findByCode(ProductionSiteCode.LUX)).thenReturn(Optional.of(luxembourg));
@@ -76,21 +66,18 @@ class DevSeedDataConfigTest {
 
         CommandLineRunner runner = new DevSeedDataConfig().seedDevelopmentData(
                 drivers,
-                users,
                 customers,
                 requests,
                 history,
                 settings,
                 productionSitesRepository,
                 productionSites,
-                passwordEncoder,
                 clock
         );
 
         runner.run();
 
         verify(drivers, never()).save(argThat(driver -> "teste".equals(driver.getName())));
-        verify(users, atLeastOnce()).save(argThat(user -> "admin".equals(user.getUsername())));
     }
 
     private DriverEntity driver(String externalId, String driverCode, String name) {

@@ -5,10 +5,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import pt.rucodel.productionplanning.domain.LifecycleStatus;
 import pt.rucodel.productionplanning.domain.RequestSource;
-import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
 import pt.rucodel.productionplanning.service.ProductionSiteService;
@@ -23,14 +21,12 @@ import java.util.List;
 public class DevSeedDataConfig {
     @Bean
     CommandLineRunner seedDevelopmentData(DriverRepository drivers,
-                                          ApplicationUserRepository users,
                                           CustomerReferenceRepository customers,
                                           WheelIntakeRequestRepository requests,
                                           RequestStatusHistoryRepository history,
                                           DailyProductionSettingsRepository settings,
                                           ProductionSiteRepository productionSites,
                                           ProductionSiteService productionSiteService,
-                                          PasswordEncoder passwordEncoder,
                                           Clock clock) {
         return args -> {
             ZoneId zone = ZoneId.of("Europe/Lisbon");
@@ -45,19 +41,6 @@ public class DevSeedDataConfig {
                     pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource.MIGRATION, "DEV_SEED");
             productionSiteService.ensureDriverAssociation(demoDriver, luxembourg,
                     pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource.MIGRATION, "DEV_SEED");
-
-            productionSiteService.ensureUserAssociation(
-                    createUserIfMissing(users, admin("admin", "Administrador", "admin123", passwordEncoder)),
-                    portugal, "DEV_SEED");
-            productionSiteService.ensureUserAssociation(
-                    createUserIfMissing(users, admin("admin", "Administrador", "admin123", passwordEncoder)),
-                    luxembourg, "DEV_SEED");
-            productionSiteService.ensureUserAssociation(
-                    createUserIfMissing(users, driverUser("driver-teste", demoDriver, "driver123", passwordEncoder)),
-                    portugal, "DEV_SEED");
-            productionSiteService.ensureUserAssociation(
-                    createUserIfMissing(users, driverUser("driver-teste", demoDriver, "driver123", passwordEncoder)),
-                    luxembourg, "DEV_SEED");
 
             CustomerReferenceEntity c1 = findOrCreateCustomer(customers, portugal, "C1001", "loja de jantes de AAAA");
             CustomerReferenceEntity c2 = findOrCreateCustomer(customers, portugal, "C1002", "loja de jantes de BBBB");
@@ -130,10 +113,6 @@ public class DevSeedDataConfig {
         return customer;
     }
 
-    private ApplicationUserEntity createUserIfMissing(ApplicationUserRepository users, ApplicationUserEntity user) {
-        return users.findByUsername(user.getUsername()).orElseGet(() -> users.save(user));
-    }
-
     private void createSettingsIfMissing(DailyProductionSettingsRepository settings, ProductionSiteEntity site, LocalDate today) {
         String key = "DATE:" + today;
         if (settings.findByProductionSite_CodeAndSettingsKey(site.getCode(), key).isPresent()) {
@@ -182,25 +161,6 @@ public class DevSeedDataConfig {
         entity.setCreatedBy("DEV_SEED");
         entity.setUpdatedBy("DEV_SEED");
         return entity;
-    }
-
-    private ApplicationUserEntity admin(String username, String displayName, String password, PasswordEncoder encoder) {
-        ApplicationUserEntity user = new ApplicationUserEntity();
-        user.setUsername(username);
-        user.setDisplayName(displayName);
-        user.setRole(UserRole.ADMIN);
-        user.setPasswordHash(encoder.encode(password));
-        user.setActive(true);
-        user.setCreatedBy("DEV_SEED");
-        user.setUpdatedBy("DEV_SEED");
-        return user;
-    }
-
-    private ApplicationUserEntity driverUser(String username, DriverEntity driver, String password, PasswordEncoder encoder) {
-        ApplicationUserEntity user = admin(username, driver.getName(), password, encoder);
-        user.setRole(UserRole.DRIVER);
-        user.setDriver(driver);
-        return user;
     }
 
     private CustomerReferenceEntity customer(ProductionSiteEntity site, String externalId, String name) {

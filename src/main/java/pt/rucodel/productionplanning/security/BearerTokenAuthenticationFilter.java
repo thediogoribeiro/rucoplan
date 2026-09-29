@@ -11,9 +11,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import pt.rucodel.productionplanning.controller.AuthController;
-import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
-import pt.rucodel.productionplanning.exception.InvalidRequestException;
-import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -22,11 +19,11 @@ import java.util.List;
 @Component
 public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
     private final TokenService tokenService;
-    private final ApplicationUserRepository users;
+    private final TokenAuthenticationValidator tokenValidator;
 
-    public BearerTokenAuthenticationFilter(TokenService tokenService, ApplicationUserRepository users) {
+    public BearerTokenAuthenticationFilter(TokenService tokenService, TokenAuthenticationValidator tokenValidator) {
         this.tokenService = tokenService;
-        this.users = users;
+        this.tokenValidator = tokenValidator;
     }
 
     @Override
@@ -56,25 +53,11 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
     private void authenticate(String token) {
         try {
             TokenClaims claims = tokenService.parse(token);
-            ApplicationUserEntity user = users.findWithDriverByUsername(claims.username())
-                    .filter(ApplicationUserEntity::isActive)
-                    .filter(entity -> entity.getId().equals(claims.userId()))
-                    .orElseThrow(() -> new InvalidRequestException("AUTHENTICATION_FAILED", "Invalid authentication token."));
-            AuthenticatedUser principal = new AuthenticatedUser(
-                    user.getId(),
-                    user.getUsername(),
-                    user.getDisplayName(),
-                    user.getRole(),
-                    user.getDriver() == null ? null : user.getDriver().getId(),
-                    claims.productionSiteId(),
-                    claims.productionSiteCode(),
-                    claims.productionSiteName(),
-                    claims.productionSiteTimezone()
-            );
+            AuthenticatedUser principal = tokenValidator.validate(claims);
             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                     principal,
                     token,
-                    List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
+                    List.of(new SimpleGrantedAuthority("ROLE_" + principal.role().name()))
             );
             SecurityContextHolder.getContext().setAuthentication(authentication);
         } catch (RuntimeException ex) {
