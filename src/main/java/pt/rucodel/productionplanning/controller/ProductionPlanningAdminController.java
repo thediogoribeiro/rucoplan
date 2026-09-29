@@ -28,12 +28,12 @@ public class ProductionPlanningAdminController {
 
     @GetMapping("/production-plans")
     public List<DailyProductionPlanResponse> listPlans(@RequestParam LocalDate from, @RequestParam LocalDate to) {
-        return productionPlanning.list(from, to);
+        return productionPlanning.list(currentUserService.requireUser().productionSiteCode(), from, to);
     }
 
     @GetMapping("/production-plans/{date}")
     public DailyProductionPlanResponse getPlan(@PathVariable LocalDate date) {
-        return productionPlanning.getOrGenerate(date);
+        return productionPlanning.getOrGenerate(currentUserService.requireUser().productionSiteCode(), date);
     }
 
     @PostMapping("/production-plans/{date}/recalculate")
@@ -43,7 +43,17 @@ public class ProductionPlanningAdminController {
 
     @GetMapping("/production-plans/{date}/reconciliation")
     public DailyProductionPlanResponse reconciliation(@PathVariable LocalDate date) {
-        return productionPlanning.reconciliation(date);
+        return productionPlanning.reconciliation(currentUserService.requireUser().productionSiteCode(), date);
+    }
+
+    @GetMapping("/production-plans/{date}/reconciliation/open")
+    public DailyProductionPlanResponse openReconciliation(@PathVariable LocalDate date) {
+        return productionPlanning.openReconciliation(currentUserService.requireUser().productionSiteCode(), date);
+    }
+
+    @GetMapping("/production-plans/{date}/reconciliation/closed")
+    public DailyProductionPlanResponse closedReconciliation(@PathVariable LocalDate date) {
+        return productionPlanning.closedReconciliation(currentUserService.requireUser().productionSiteCode(), date);
     }
 
     @PutMapping("/production-plans/{date}/reconciliation")
@@ -57,19 +67,33 @@ public class ProductionPlanningAdminController {
         return productionPlanning.close(date, request, currentUserService.requireUser());
     }
 
+    @PostMapping("/production-plans/{date}/items/{itemId}/close")
+    public DailyProductionPlanResponse closeItem(@PathVariable LocalDate date,
+                                                 @PathVariable java.util.UUID itemId,
+                                                 @Valid @RequestBody PlanItemCloseRequest request) {
+        return productionPlanning.closeItem(date, itemId, request, currentUserService.requireUser());
+    }
+
     @PostMapping("/production-plans/{date}/reopen")
     public DailyProductionPlanResponse reopen(@PathVariable LocalDate date, @Valid @RequestBody ReopenPlanRequest request) {
         return productionPlanning.reopen(date, request, currentUserService.requireUser());
     }
 
+    @PostMapping("/production-plans/{date}/items/{itemId}/reopen")
+    public DailyProductionPlanResponse reopenItem(@PathVariable LocalDate date,
+                                                  @PathVariable java.util.UUID itemId,
+                                                  @Valid @RequestBody PlanItemReopenRequest request) {
+        return productionPlanning.reopenItem(date, itemId, request, currentUserService.requireUser());
+    }
+
     @GetMapping("/planning-targets")
     public List<PlanningTargetResponse> targets() {
-        return targets.list();
+        return targets.list(currentUserService.requireUser().productionSiteCode());
     }
 
     @PostMapping("/planning-targets")
     public PlanningTargetResponse createTarget(@Valid @RequestBody PlanningTargetRequest request) {
         var user = currentUserService.requireUser();
-        return targets.create(request, user.actorLabel());
+        return targets.create(user.productionSiteCode(), request, user.actorLabel());
     }
 }

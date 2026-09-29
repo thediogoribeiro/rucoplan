@@ -30,6 +30,12 @@ const state = {
   busy: {},
   operationNotice: null,
   pageNotice: null,
+  reopenClosure: null,
+  highlightedClosureLineId: null,
+  manualOrder: {
+    mode: 'existing',
+    alreadyAtFactory: true
+  },
   stream: null,
   fallbackTimer: null,
   realtime: {
@@ -50,13 +56,15 @@ const state = {
     customer: '',
     status: '',
     risk: '',
-    confidence: ''
+    confidence: '',
+    productionDate: ''
   }
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
   const current = api.requireRole('ADMIN');
   if (!current) return;
+  renderActiveSite(current.user?.productionSite);
   document.querySelector('#logout').addEventListener('click', api.logout);
   document.querySelector('#dashboard-date').value = state.date;
   document.querySelector('#dashboard-date').addEventListener('change', async event => {
@@ -95,6 +103,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAdminData();
   render();
 });
+
+function renderActiveSite(site) {
+  const element = document.querySelector('#active-site-indicator');
+  if (!element) return;
+  if (!site?.code) {
+    element.textContent = 'Unidade ativa: —';
+    return;
+  }
+  element.innerHTML = `Unidade ativa: ${pp.escapeHtml(site.displayName || site.code)} <strong>${pp.escapeHtml(site.code)}</strong>`;
+}
 
 function defaultAdminView() {
   return location.pathname.includes('/admin/system-diagnostics/realtime')
@@ -180,7 +198,7 @@ async function loadOptionalAdminData() {
     api.get('/api/v1/admin/messaging-identities'),
     api.get('/api/v1/admin/customer-registration-requests'),
     api.get('/api/v1/admin/customers'),
-    api.get('/api/v1/admin/requests?size=200'),
+    api.get(`/api/v1/admin/requests?size=200${state.filters.productionDate ? `&productionDate=${state.filters.productionDate}` : ''}`),
     api.get('/api/v1/admin/factory-arrivals?status=COMMUNICATED'),
     api.get('/api/v1/admin/audit?size=50')
   ]);
@@ -201,6 +219,7 @@ function render() {
   if (state.view === 'planning') renderProductionPlanning();
   else if (state.view === 'closure') renderShiftClosure();
   else if (state.view === 'targets') renderTargets();
+  else if (state.view === 'new-request') renderNewRequest();
   else if (state.view === 'requests') renderRequests();
   else if (state.view === 'factory-arrivals') renderFactoryArrivals();
   else if (state.view === 'drivers') renderDrivers();
@@ -344,7 +363,7 @@ function productionPlanTable(lines) {
         <td>${pp.formatDateTime(line.deadlineAt)}</td>
         <td>${factoryWindow(line.factoryPickupStart, line.factoryPickupEnd)}</td>
         <td>${pp.escapeHtml(line.notes || '-')}</td>
-        <td>${line.source === 'TELEGRAM' ? 'Telegram' : 'Aplicação'}</td>
+        <td>${sourceLabel(line.source)}</td>
         <td>${line.carriedOver ? pp.badge('CARRIED_OVER') : ''} ${line.advancedFromFuture ? pp.badge('ADVANCED') : ''}<small>${pp.escapeHtml(line.priorityExplanation || '')}</small></td>
         <td>${pp.badge(line.status)} ${pp.badge(line.riskClassification)}</td>
       </tr>`).join('')}</tbody>
@@ -488,24 +507,42 @@ async function saveTargets(event) {
 
 function renderShiftClosure() {
   const plan = state.productionPlan;
-  const lines = plan?.lines || [];
+  const lines = (plan?.lines || []).filter(line => !isClosedPlanLine(line));
+  const closedLines = (plan?.lines || []).filter(isClosedPlanLine);
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
       <div class="section-header">
-        <h2>Fecho do turno</h2>
+        <div>
+          <h2>Fecho do turno</h2>
+          <p class="muted">Pedidos por fechar no turno de ${pp.formatDate(state.date)}.</p>
+        </div>
         <button id="mark-all-complete" type="button" class="secondary" ${state.busy.markAll ? 'disabled' : ''}>Marcar tudo como concluído</button>
       </div>
       ${plan?.warning?.includes('fecho do turno anterior pendente') ? `<p class="message warning">Aviso de fecho pendente: valide o dia anterior para tornar o plano definitivo.</p>` : ''}
+      ${pageNotice()}
       <form id="closure-form">
         <div class="closure-summary" id="closure-summary"></div>
-        <div class="closure-cards">${lines.map(closureCard).join('')}</div>
+        <div class="closure-cards">${lines.length ? lines.map(closureCard).join('') : '<p class="message success">Todo o trabalho planeado para este turno foi validado.</p>'}</div>
         <input name="planVersion" type="hidden" value="${plan?.version || 0}">
         <div class="actions" style="margin-top:12px">
-          <button id="save-reconciliation" type="button" class="secondary" ${state.busy.closure ? 'disabled' : ''}>${state.busy.closure ? 'A guardar...' : 'Guardar rascunho'}</button>
-          <button type="submit" ${state.busy.closure ? 'disabled' : ''}>${state.busy.closure ? 'A fechar...' : 'Validar e fechar turno'}</button>
+          <button type="submit" ${state.busy.closure || !lines.length ? 'disabled' : ''}>${state.busy.closure ? 'A fechar...' : 'Validar linhas abertas'}</button>
         </div>
         <p id="closure-message" class="message hidden" role="alert"></p>
       </form>
+      ${closedLines.length ? `<details class="panel-subsection"><summary>Fechados neste turno (${closedLines.length})</summary>
+        <div class="table-wrap"><table class="requests-table">
+          <thead><tr><th>Pedido</th><th>Cliente</th><th>Planeado</th><th>Concluído</th><th>Pendente</th><th>Estado</th><th>Fechado por</th></tr></thead>
+          <tbody>${closedLines.map(line => `<tr>
+            <td><span class="code-pill">${pp.escapeHtml(line.requestCode || '-')}</span></td>
+            <td>${pp.escapeHtml(line.customerName)}</td>
+            <td>${line.plannedQuantity}</td>
+            <td>${line.completedQuantity}</td>
+            <td>${line.remainingQuantity}</td>
+            <td>${pp.badge(line.status)}</td>
+            <td>${pp.escapeHtml(line.closedBy || '-')}<br><small>${pp.formatDateTime(line.closedAt)}</small></td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </details>` : ''}
     </section>`;
   bindClosureForm();
   document.querySelectorAll('[data-closure-line]').forEach(validateClosureRow);
@@ -513,12 +550,14 @@ function renderShiftClosure() {
 }
 
 function closureCard(line) {
-  return `<article class="closure-card" data-closure-line>
+  const highlighted = state.highlightedClosureLineId && String(line.id) === String(state.highlightedClosureLineId);
+  return `<article class="closure-card ${highlighted ? 'highlighted' : ''}" data-closure-line data-request-code="${pp.escapeHtml(line.requestCode || '-')}" data-customer-name="${pp.escapeHtml(line.customerName)}" data-request-remaining="${line.requestRemainingQuantity || line.plannedQuantity}">
     <section class="closure-info">
       <input type="hidden" data-line-id value="${line.id}">
       <input type="hidden" data-line-version value="${line.version}">
       ${infoRow('Cliente', line.customerName)}
       ${infoRow('Pedido', line.requestCode || '-')}
+      ${infoRow('Data do plano', pp.formatDate(state.date))}
       ${infoRow('Total planeado', line.plannedQuantity)}
       ${infoRow('Bipartidas', quantityValue(line.wheelQuantities, 'BIPARTITE'))}
       ${infoRow('Lavadas', quantityValue(line.wheelQuantities, 'WASHED'))}
@@ -533,6 +572,9 @@ function closureCard(line) {
         <tfoot><tr><th>Total</th><th data-row-planned>${line.plannedQuantity}</th><th data-row-completed>0</th><th data-row-remaining>0</th></tr></tfoot>
       </table>
       <label>Notas operacionais<input data-notes value="${pp.escapeHtml(line.operationalNotes || '')}"></label>
+      <div class="actions"><button type="button" data-close-line disabled aria-disabled="true" title="Não é possível fechar: nenhuma jante foi marcada como concluída.">Fechar no turno</button></div>
+      <p class="help-text" data-close-help>Indique pelo menos uma jante concluída para poder fechar este trabalho no turno.</p>
+      <div class="closure-confirmation hidden" data-close-confirmation></div>
       <p class="message error hidden" data-line-error></p>
     </section>
   </article>`;
@@ -545,6 +587,7 @@ function infoRow(label, value) {
 function bindClosureForm() {
   document.querySelector('#mark-all-complete')?.addEventListener('click', () => {
     document.querySelectorAll('[data-closure-line]').forEach(row => {
+      clearClosureConfirmation(row);
       row.querySelectorAll('[data-type-completed]').forEach(input => input.value = input.dataset.typePlanned);
       row.querySelectorAll('[data-type-remaining]').forEach(input => input.value = 0);
       validateClosureRow(row);
@@ -553,16 +596,17 @@ function bindClosureForm() {
   });
   document.querySelectorAll('[data-type-completed]').forEach(input => input.addEventListener('input', syncTypeRemaining));
   document.querySelectorAll('[data-type-remaining]').forEach(input => input.addEventListener('input', syncTypeCompleted));
-  document.querySelector('#save-reconciliation')?.addEventListener('click', () => submitClosure(false));
+  document.querySelectorAll('[data-close-line]').forEach(button => button.addEventListener('click', () => submitClosureLine(button.closest('[data-closure-line]'))));
   document.querySelector('#closure-form')?.addEventListener('submit', event => {
     event.preventDefault();
-    submitClosure(true);
+    submitClosure();
   });
 }
 
 function syncTypeRemaining(event) {
   const input = event.target;
   const row = input.closest('[data-closure-line]');
+  clearClosureConfirmation(row);
   const target = row.querySelector(`[data-type-remaining][data-type="${input.dataset.type}"]`);
   target.value = Math.max(Number(input.dataset.typePlanned) - Number(input.value || 0), 0);
   validateClosureRow(row);
@@ -572,34 +616,173 @@ function syncTypeRemaining(event) {
 function syncTypeCompleted(event) {
   const input = event.target;
   const row = input.closest('[data-closure-line]');
+  clearClosureConfirmation(row);
   const target = row.querySelector(`[data-type-completed][data-type="${input.dataset.type}"]`);
   target.value = Math.max(Number(input.dataset.typePlanned) - Number(input.value || 0), 0);
   validateClosureRow(row);
   updateClosureTotals();
 }
 
-async function submitClosure(close) {
+async function submitClosure() {
   const message = document.querySelector('#closure-message');
   pp.hideMessage(message);
+  const rows = [...document.querySelectorAll('[data-closure-line]')];
+  const invalid = rows.some(row => !validateClosureRow(row));
+  if (invalid) {
+    pp.showMessage(message, 'Corrija as quantidades antes de fechar o turno.');
+    return;
+  }
+  const closable = rows.filter(row => rowCompletedTotal(row) > 0);
+  if (!closable.length) {
+    pp.showMessage(message, 'Indique pelo menos uma jante concluída para poder fechar este trabalho no turno.');
+    return;
+  }
+  pp.showMessage(message, 'Use o botão Fechar no turno em cada pedido para confirmar o fecho individualmente.', 'info');
+}
+
+async function submitClosureLine(row) {
+  const message = document.querySelector('#closure-message');
+  pp.hideMessage(message);
+  if (!validateClosureRow(row)) {
+    pp.showMessage(message, 'Corrija as quantidades antes de fechar este pedido.');
+    return;
+  }
+  if (rowCompletedTotal(row) <= 0) {
+    updateCloseButtonState(row, true);
+    pp.showMessage(message, 'Indique pelo menos uma jante concluída para poder fechar este trabalho no turno.');
+    return;
+  }
+  showClosureConfirmation(row);
+}
+
+async function confirmClosureLine(row, expectedCompleted, expectedRemaining) {
+  const message = document.querySelector('#closure-message');
+  pp.hideMessage(message);
+  if (!validateClosureRow(row)) {
+    clearClosureConfirmation(row);
+    pp.showMessage(message, 'Corrija as quantidades antes de fechar este pedido.');
+    return;
+  }
+  if (rowCompletedTotal(row) !== expectedCompleted || rowRemainingTotal(row) !== expectedRemaining) {
+    clearClosureConfirmation(row);
+    pp.showMessage(message, 'As quantidades foram alteradas. Revise os dados e confirme novamente.');
+    return;
+  }
   try {
-    const invalid = [...document.querySelectorAll('[data-closure-line]')].some(row => !validateClosureRow(row));
-    if (invalid) {
-      pp.showMessage(message, 'Corrija as quantidades antes de fechar o turno.');
-      return;
-    }
-    state.busy.closure = true;
-    document.querySelectorAll('#closure-form button').forEach(button => button.disabled = true);
-    const payload = reconciliationPayload();
-    state.productionPlan = await api[close ? 'postJson' : 'putJson'](`/api/v1/admin/production-plans/${state.date}/${close ? 'close' : 'reconciliation'}`, payload);
+    row.querySelectorAll('button,input').forEach(element => element.disabled = true);
+    const result = await closeClosureRow(row);
     await loadAdminData();
     renderShiftClosure();
-    pp.showMessage(document.querySelector('#closure-message'), close ? 'Turno fechado com sucesso.' : 'Rascunho guardado com sucesso.', 'success');
+    const completed = result.completed;
+    const remaining = result.remaining;
+    const requestCode = row.dataset.requestCode || 'pedido';
+    const readyText = result.willBeReady
+      ? ` O pedido ${requestCode} está agora pronto para levantamento.`
+      : '';
+    const text = remaining === 0
+      ? `Pedido fechado neste turno. Foram registadas ${completed} ${wheelWord(completed)} concluídas. Não ficou trabalho pendente nesta linha.${readyText}`
+      : `Fecho parcial registado. Foram registadas ${completed} ${wheelWord(completed)} concluídas. Ficou ${remaining} ${wheelWord(remaining)} pendente para o próximo dia elegível de produção.`;
+    pp.showMessage(document.querySelector('#closure-message'), text, 'success');
   } catch (error) {
-    pp.showMessage(message, error.message || 'Não foi possível guardar o fecho.');
+    pp.showMessage(message, error.message || 'Não foi possível fechar este pedido.');
   } finally {
-    state.busy.closure = false;
-    document.querySelectorAll('#closure-form button').forEach(button => button.disabled = false);
+    row.querySelectorAll('button,input').forEach(element => element.disabled = false);
   }
+}
+
+async function closeClosureRow(row) {
+  const payload = lineClosePayload(row);
+  const id = row.querySelector('[data-line-id]').value;
+  state.productionPlan = await api.postJson(`/api/v1/admin/production-plans/${state.date}/items/${id}/close`, payload);
+  const requestRemaining = Number(row.dataset.requestRemaining || 0);
+  const completed = payload.wheelQuantities.reduce((sum, quantity) => sum + quantity.completedQuantity, 0);
+  return {
+    completed,
+    remaining: rowRemainingTotal(row),
+    willBeReady: requestRemaining > 0 && completed >= requestRemaining
+  };
+}
+
+function showClosureConfirmation(row) {
+  const completed = rowCompletedTotal(row);
+  const remaining = rowRemainingTotal(row);
+  const planned = Number(row.querySelector('[data-row-planned]').textContent || 0);
+  const requestCode = row.dataset.requestCode || '-';
+  const customer = row.dataset.customerName || '-';
+  const panel = row.querySelector('[data-close-confirmation]');
+  const isComplete = completed === planned && remaining === 0;
+  const requestRemaining = Number(row.dataset.requestRemaining || 0);
+  const readyNotice = isComplete && requestRemaining > 0 && completed >= requestRemaining
+    ? '<p>Após este fecho, o pedido ficará com o estado “Pronto”.</p>'
+    : '';
+  panel.className = `closure-confirmation message ${isComplete ? 'success' : 'warning'}`;
+  panel.innerHTML = isComplete
+    ? `<strong>Confirmar conclusão total</strong>
+      ${confirmationHeader(requestCode, customer)}
+      <p><strong>Concluído neste turno:</strong></p>
+      ${typeQuantityList(row, 'completed')}
+      <p><strong>Total:</strong> ${completed} ${wheelWord(completed)}</p>
+      <p>Todas as jantes planeadas para este pedido neste turno foram concluídas.</p>
+      ${readyNotice}
+      <p>Pretende fechar este trabalho como totalmente concluído?</p>
+      <div class="actions"><button type="button" class="secondary" data-cancel-close>Cancelar</button><button type="button" data-confirm-close>Confirmar conclusão</button></div>`
+    : `<strong>Confirmar conclusão parcial</strong>
+      ${confirmationHeader(requestCode, customer)}
+      <p><strong>Concluído neste turno:</strong></p>
+      ${typeQuantityList(row, 'completed')}
+      <p><strong>Total concluído:</strong> ${completed} ${wheelWord(completed)}</p>
+      <p><strong>Pendente:</strong></p>
+      ${typeQuantityList(row, 'remaining')}
+      <p><strong>Total pendente:</strong> ${remaining} ${wheelWord(remaining)}</p>
+      <p>Pretende fechar as ${completed} ${wheelWord(completed)} concluídas neste turno?</p>
+      <p>As restantes não serão dadas como concluídas. As quantidades pendentes continuam associadas ao mesmo pedido e serão transportadas para o próximo dia elegível de produção.</p>
+      <div class="actions"><button type="button" class="secondary" data-cancel-close>Cancelar</button><button type="button" data-confirm-close>Confirmar fecho parcial</button></div>`;
+  panel.classList.remove('hidden');
+  panel.querySelector('[data-cancel-close]').addEventListener('click', () => clearClosureConfirmation(row));
+  panel.querySelector('[data-confirm-close]').addEventListener('click', () => confirmClosureLine(row, completed, remaining));
+}
+
+function confirmationHeader(requestCode, customer) {
+  return `<div class="closure-confirmation-meta">
+    <span><strong>Pedido:</strong> ${pp.escapeHtml(requestCode)}</span>
+    <span><strong>Cliente:</strong> ${pp.escapeHtml(customer)}</span>
+    <span><strong>Data do plano:</strong> ${pp.formatDate(state.date)}</span>
+  </div>`;
+}
+
+function typeQuantityList(row, field) {
+  return `<ul class="closure-confirmation-list">${['BIPARTITE', 'WASHED', 'NORMAL'].map(type => {
+    const value = Number(row.querySelector(`[data-type-${field}][data-type="${type}"]`).value || 0);
+    return `<li><span>${typeLabel(type)}</span><strong>${value}</strong></li>`;
+  }).join('')}</ul>`;
+}
+
+function clearClosureConfirmation(row) {
+  const panel = row?.querySelector('[data-close-confirmation]');
+  if (!panel) return;
+  panel.className = 'closure-confirmation hidden';
+  panel.innerHTML = '';
+}
+
+function typeLabel(type) {
+  if (type === 'BIPARTITE') return 'Bipartidas';
+  if (type === 'WASHED') return 'Lavadas';
+  return 'Normais';
+}
+
+function wheelWord(quantity) {
+  return quantity === 1 ? 'jante' : 'jantes';
+}
+
+function lineClosePayload(row) {
+  return {
+    version: Number(row.querySelector('[data-line-version]').value),
+    wheelQuantities: ['BIPARTITE', 'WASHED', 'NORMAL'].map(type => ({
+      type,
+      completedQuantity: Number(row.querySelector(`[data-type-completed][data-type="${type}"]`).value || 0)
+    })),
+    operationalNotes: row.querySelector('[data-notes]').value
+  };
 }
 
 function reconciliationPayload() {
@@ -622,6 +805,22 @@ function reconciliationPayload() {
       };
     })
   };
+}
+
+function rowCompletedTotal(row) {
+  return ['BIPARTITE', 'WASHED', 'NORMAL']
+    .map(type => Number(row.querySelector(`[data-type-completed][data-type="${type}"]`).value || 0))
+    .reduce((sum, value) => sum + value, 0);
+}
+
+function rowRemainingTotal(row) {
+  return ['BIPARTITE', 'WASHED', 'NORMAL']
+    .map(type => Number(row.querySelector(`[data-type-remaining][data-type="${type}"]`).value || 0))
+    .reduce((sum, value) => sum + value, 0);
+}
+
+function isClosedPlanLine(line) {
+  return ['CLOSED_COMPLETE', 'CLOSED_PARTIAL', 'COMPLETED', 'PARTIALLY_COMPLETED', 'CARRIED_OVER'].includes(line?.status);
 }
 
 function renderDashboard() {
@@ -673,6 +872,214 @@ function renderDashboard() {
     state.filters.confidence = document.querySelector('#filter-confidence')?.value || '';
     renderDashboard();
   }));
+}
+
+function renderNewRequest() {
+  document.querySelector('#admin-app').innerHTML = `
+    <section class="panel">
+      <div class="section-header">
+        <div>
+          <h2>Novo Pedido</h2>
+          <p class="muted">Registo manual para clientes que aparecem diretamente na fábrica ou quando os canais de mensagem não estão disponíveis.</p>
+        </div>
+      </div>
+      ${pageNotice()}
+      <form id="manual-request-form" class="form-grid manual-request-form">
+        <fieldset>
+          <legend>Cliente</legend>
+          <label>Modo
+            <select id="manual-customer-mode" name="customerMode">
+              <option value="existing" ${state.manualOrder.mode !== 'new' ? 'selected' : ''}>Selecionar cliente existente</option>
+              <option value="new" ${state.manualOrder.mode === 'new' ? 'selected' : ''}>Criar novo cliente</option>
+            </select>
+          </label>
+          <div class="${state.manualOrder.mode === 'new' ? 'hidden' : ''}">
+            <label>Cliente existente<input name="customerSearch" list="manual-customers" placeholder="Pesquisar cliente por nome ou código"></label>
+            <datalist id="manual-customers">
+              ${state.customers.map(customer => `<option value="${pp.escapeHtml(customer.customerCode || '')} · ${pp.escapeHtml(customer.name)}"></option>`).join('')}
+            </datalist>
+          </div>
+          <div class="${state.manualOrder.mode === 'new' ? '' : 'hidden'}">
+            <label>Nome<input name="newCustomerName"></label>
+            <label>NIF/VAT<input name="newCustomerTaxIdentifier"></label>
+            <label>País<input name="newCustomerCountryCode" maxlength="2" placeholder="PT"></label>
+            <label>Localidade<input name="newCustomerLocality"></label>
+            <label>ID RucoFi opcional<input name="newCustomerRucofiId"></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Motorista</legend>
+          <label>Motorista, se aplicável
+            <select name="driverId">
+              <option value="">Sem motorista</option>
+              ${state.drivers.map(driver => `<option value="${pp.escapeHtml(driver.id)}">${pp.escapeHtml(driver.driverCode || '')} · ${pp.escapeHtml(driver.name)}</option>`).join('')}
+            </select>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Quantidades</legend>
+          <label>Jantes bipartidas<input name="bipartiteQuantity" type="number" min="0" step="1" value="0"></label>
+          <label>Jantes lavadas<input name="washedQuantity" type="number" min="0" step="1" value="0"></label>
+          <label>Jantes normais<input name="normalQuantity" type="number" min="0" step="1" value="0"></label>
+          <p class="muted wide" id="manual-total">Total de jantes: 0</p>
+        </fieldset>
+        <fieldset>
+          <legend>Situação da chegada</legend>
+          <label>As jantes já estão na fábrica?
+            <select name="alreadyAtFactory" id="manual-already-at-factory">
+              <option value="true" selected>Sim</option>
+              <option value="false">Não</option>
+            </select>
+          </label>
+          <div id="manual-arrival-real"><label>Chegada real<input name="actualArrivalAt" type="datetime-local"></label></div>
+          <div id="manual-arrival-expected" class="hidden">
+            <label>Data prevista de chegada<input name="expectedFactoryDropoffDate" type="date"></label>
+            <label>Intervalo previsto<select name="expectedFactoryDropoffWindow">${slotOptions()}</select></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Levantamento</legend>
+          <label>Data pretendida<input name="requestedPickupDate" type="date" required></label>
+          <label>Intervalo de levantamento<select name="requestedPickupWindow">${slotOptions()}</select></label>
+          <label class="wide">Notas<textarea name="notes" rows="3"></textarea></label>
+        </fieldset>
+        <section class="message info wide" id="manual-summary">Preencha os dados para ver o resumo antes de criar o pedido.</section>
+        <div class="actions wide"><button type="submit" ${state.busy.createManualRequest ? 'disabled' : ''}>${state.busy.createManualRequest ? 'A criar...' : 'Criar pedido'}</button></div>
+      </form>
+    </section>`;
+  bindNewRequestForm();
+}
+
+function slotOptions() {
+  return `<option value="MORNING_09_14">09:00–14:00</option><option value="AFTERNOON_14_19">14:00–19:00</option><option value="EVENING_19_OVERNIGHT">19:00–madrugada</option>`;
+}
+
+function bindNewRequestForm() {
+  const form = document.querySelector('#manual-request-form');
+  const mode = document.querySelector('#manual-customer-mode');
+  mode?.addEventListener('change', () => {
+    state.manualOrder.mode = mode.value;
+    renderNewRequest();
+  });
+  document.querySelector('#manual-already-at-factory')?.addEventListener('change', updateManualArrivalVisibility);
+  form?.querySelectorAll('input, select, textarea').forEach(input => input.addEventListener('input', updateManualSummary));
+  form?.addEventListener('submit', createManualRequest);
+  const arrivalInput = form?.querySelector('[name="actualArrivalAt"]');
+  if (arrivalInput && !arrivalInput.value) arrivalInput.value = localDateTimeInputValue(new Date());
+  updateManualArrivalVisibility();
+  updateManualSummary();
+}
+
+function updateManualArrivalVisibility() {
+  const already = document.querySelector('#manual-already-at-factory')?.value !== 'false';
+  document.querySelector('#manual-arrival-real')?.classList.toggle('hidden', !already);
+  document.querySelector('#manual-arrival-expected')?.classList.toggle('hidden', already);
+  updateManualSummary();
+}
+
+function updateManualSummary() {
+  const form = document.querySelector('#manual-request-form');
+  if (!form) return;
+  const quantities = manualQuantities(form);
+  const total = quantities.reduce((sum, item) => sum + item.quantity, 0);
+  document.querySelector('#manual-total').textContent = `Total de jantes: ${total}`;
+  const customer = form.customerMode.value === 'new'
+    ? form.newCustomerName.value || 'Novo cliente'
+    : form.customerSearch.value || 'Cliente existente';
+  const already = form.alreadyAtFactory.value !== 'false';
+  document.querySelector('#manual-summary').innerHTML = `
+    <strong>Confirmar novo pedido</strong><br>
+    Cliente: ${pp.escapeHtml(customer)}<br>
+    Motorista: ${form.driverId.value ? pp.escapeHtml(form.driverId.options[form.driverId.selectedIndex].textContent) : 'Sem motorista'}<br>
+    Bipartidas: ${quantityValue(quantities, 'BIPARTITE')} · Lavadas: ${quantityValue(quantities, 'WASHED')} · Normais: ${quantityValue(quantities, 'NORMAL')} · Total: ${total}<br>
+    Situação: ${already ? 'Já se encontram na fábrica' : 'Chegada futura'}<br>
+    Levantamento pretendido: ${pp.escapeHtml(form.requestedPickupDate.value || '-')} · ${pp.escapeHtml(slotLabel(form.requestedPickupWindow.value))}
+  `;
+}
+
+async function createManualRequest(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    state.busy.createManualRequest = true;
+    let customerId = null;
+    if (form.customerMode.value === 'new') {
+      const created = await api.postJson('/api/v1/admin/customers', {
+        name: form.newCustomerName.value,
+        taxIdentifier: form.newCustomerTaxIdentifier.value,
+        countryCode: form.newCustomerCountryCode.value,
+        locality: form.newCustomerLocality.value,
+        externalSystem: form.newCustomerRucofiId.value ? 'RUCOFI' : null,
+        externalCustomerId: form.newCustomerRucofiId.value || null,
+        active: true
+      });
+      customerId = created.id;
+    } else {
+      customerId = customerIdFromManualSearch(form.customerSearch.value);
+    }
+    if (!customerId) throw new Error('Selecione um cliente existente ou crie um novo cliente.');
+    const alreadyAtFactory = form.alreadyAtFactory.value !== 'false';
+    const created = await api.postJson('/api/v1/admin/requests/manual', {
+      customerReferenceId: customerId,
+      driverId: form.driverId.value || null,
+      wheelQuantities: manualQuantities(form),
+      alreadyAtFactory,
+      actualArrivalAt: alreadyAtFactory ? localInputToOffset(form.actualArrivalAt.value) : null,
+      expectedFactoryDropoffDate: alreadyAtFactory ? null : form.expectedFactoryDropoffDate.value,
+      expectedFactoryDropoffWindow: alreadyAtFactory ? null : form.expectedFactoryDropoffWindow.value,
+      requestedPickupDate: form.requestedPickupDate.value,
+      requestedPickupWindow: form.requestedPickupWindow.value,
+      notes: form.notes.value
+    });
+    state.pageNotice = { type: 'success', message: `Pedido ${created.requestCode || ''} criado com sucesso.` };
+    await loadAdminData();
+    state.view = 'requests';
+    history.replaceState(null, '', `${location.pathname}${location.search}#requests`);
+    syncNavigation();
+    render();
+  } catch (error) {
+    state.pageNotice = { type: 'error', message: error.message || 'Não foi possível criar o pedido manual.' };
+    renderNewRequest();
+  } finally {
+    state.busy.createManualRequest = false;
+  }
+}
+
+function manualQuantities(form) {
+  return [
+    { type: 'BIPARTITE', quantity: integerValue(form.bipartiteQuantity.value) },
+    { type: 'WASHED', quantity: integerValue(form.washedQuantity.value) },
+    { type: 'NORMAL', quantity: integerValue(form.normalQuantity.value) }
+  ];
+}
+
+function customerIdFromManualSearch(value) {
+  const query = (value || '').toLowerCase();
+  return state.customers.find(item => `${item.customerCode || ''} · ${item.name}`.toLowerCase() === query
+    || item.name.toLowerCase() === query
+    || (item.customerCode || '').toLowerCase() === query)?.id || null;
+}
+
+function integerValue(value) {
+  const parsed = Number.parseInt(value || '0', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function localDateTimeInputValue(date) {
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function localInputToOffset(value) {
+  return value ? new Date(value).toISOString() : null;
+}
+
+function slotLabel(value) {
+  return {
+    MORNING_09_14: '09:00–14:00',
+    AFTERNOON_14_19: '14:00–19:00',
+    EVENING_19_OVERNIGHT: '19:00–madrugada'
+  }[value] || value || '-';
 }
 
 function arrivalPendingNotice(items) {
@@ -878,25 +1285,169 @@ async function updatePriority(id) {
 }
 
 function renderRequests() {
+  const productionMode = !!state.filters.productionDate;
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
-      <div class="section-header"><h2>Pedidos registados</h2></div>
+      <div class="section-header">
+        <div>
+          <h2>Pedidos registados</h2>
+          <p class="muted">${productionMode ? 'Resultado das linhas do plano para a data de produção selecionada.' : 'Lista informativa dos pedidos globais.'}</p>
+        </div>
+      </div>
+      ${pageNotice()}
+      ${reopenClosurePanel()}
+      <div class="filters">
+        <label>Data do plano de produção<input id="request-production-date" type="date" value="${pp.escapeHtml(state.filters.productionDate || '')}"></label>
+        <button type="button" class="secondary" id="clear-request-production-date" ${state.filters.productionDate ? '' : 'disabled'}>Limpar data</button>
+      </div>
       <div class="table-wrap"><table class="requests-table">
-        <thead><tr><th>Pedido</th><th>Cliente</th><th>Motorista</th><th>Tipos de jantes</th><th>Deixar na fábrica</th><th>Levantar na fábrica</th><th>Estado</th><th>Origem</th><th>Recebidas</th><th>Diferença</th></tr></thead>
+        <thead><tr>
+          <th>Pedido</th><th>Cliente</th><th>Motorista</th>
+          ${productionMode ? '<th>Data de produção</th><th>Planeadas</th><th>Concluídas</th><th>Pendentes</th><th>Fecho diário</th><th>Fechado por</th><th>Estado global</th><th>Correção de fecho</th>' : '<th>Tipos de jantes</th><th>Deixar na fábrica</th><th>Levantar na fábrica</th><th>Estado</th><th>Origem</th><th>Recebidas</th><th>Diferença</th><th>Correção de fecho</th>'}
+        </tr></thead>
         <tbody>${state.requests.map(request => `<tr>
           <td><span class="code-pill">${pp.escapeHtml(request.requestCode || '-')}</span></td>
           <td>${pp.escapeHtml(request.customerNameSnapshot)}</td>
-          <td>${pp.escapeHtml(request.driverName)}</td>
-          <td>${wheelSummaryVertical(request.wheelQuantities)}</td>
-          <td>${factoryWindow(request.expectedFactoryDropOffWindowStart, request.expectedFactoryDropOffWindowEnd)}</td>
-          <td>${factoryWindow(request.requestedFactoryPickupWindowStart, request.requestedFactoryPickupWindowEnd)}</td>
-          <td>${pp.badge(request.lifecycleStatus)}</td>
-          <td>${pp.escapeHtml(request.source || '-')}</td>
-          <td>${request.actualReceivedWheelQuantity ?? '-'}</td>
-          <td>${request.quantityDiscrepancy ? pp.badge('AT_RISK') : '-'}</td>
+          <td>${pp.escapeHtml(request.driverName || 'Sem motorista')}</td>
+          ${productionMode ? productionRequestCells(request) : `
+            <td>${wheelSummaryVertical(request.wheelQuantities)}</td>
+            <td>${factoryWindow(request.expectedFactoryDropOffWindowStart, request.expectedFactoryDropOffWindowEnd)}</td>
+            <td>${factoryWindow(request.requestedFactoryPickupWindowStart, request.requestedFactoryPickupWindowEnd)}</td>
+            <td>${pp.badge(request.lifecycleStatus)}</td>
+            <td>${sourceLabel(request.source)}</td>
+            <td>${request.actualReceivedWheelQuantity ?? '-'}</td>
+            <td>${request.quantityDiscrepancy ? pp.badge('AT_RISK') : '-'}</td>
+            <td>${closureCorrectionCell(request)}</td>
+          `}
         </tr>`).join('')}</tbody>
       </table></div>
     </section>`;
+  bindRequestsTable();
+}
+
+function productionRequestCells(request) {
+  return `
+    <td>${pp.formatDate(request.productionDate)}</td>
+    <td>${wheelSummaryVertical(request.productionWheelQuantities)}</td>
+    <td>${request.productionCompletedQuantity ?? 0}</td>
+    <td>${request.productionRemainingQuantity ?? 0}</td>
+    <td>${pp.badge(request.productionLineStatus || 'OPEN')}</td>
+    <td>${pp.escapeHtml(request.productionClosedBy || '-')}<br><small>${pp.formatDateTime(request.productionClosedAt)}</small></td>
+    <td>${pp.badge(request.lifecycleStatus)}</td>
+    <td>${closureCorrectionCell(request)}</td>
+  `;
+}
+
+function closureCorrectionCell(request) {
+  if (request.canReopenClosure) {
+    return `<button type="button" class="secondary" data-reopen-line="${pp.escapeHtml(request.productionPlanItemId)}" data-reconciliation-id="${pp.escapeHtml(request.reconciliationId || '')}" data-closure-status="${pp.escapeHtml(request.closureStatus || '')}">Reabrir no Fecho do Turno</button>`;
+  }
+  if (request.reopenBlockReason) {
+    return `<span class="muted" title="${pp.escapeHtml(request.reopenBlockReason)}" aria-label="${pp.escapeHtml(request.reopenBlockReason)}">Reabertura indisponível</span><br><small>${pp.escapeHtml(request.reopenBlockReason)}</small>`;
+  }
+  return '—';
+}
+
+function bindRequestsTable() {
+  document.querySelector('#request-production-date')?.addEventListener('change', async event => {
+    state.filters.productionDate = event.target.value || '';
+    await reloadRequests();
+    renderRequests();
+  });
+  document.querySelector('#clear-request-production-date')?.addEventListener('click', async () => {
+    state.filters.productionDate = '';
+    await reloadRequests();
+    renderRequests();
+  });
+  document.querySelectorAll('[data-reopen-line]').forEach(button => {
+    button.addEventListener('click', () => openReopenClosurePanel(button.dataset.reopenLine));
+  });
+  document.querySelector('[data-cancel-reopen]')?.addEventListener('click', () => {
+    state.reopenClosure = null;
+    renderRequests();
+  });
+  document.querySelector('[data-confirm-reopen]')?.addEventListener('click', confirmReopenPlanItemClosure);
+}
+
+async function reloadRequests() {
+  const response = await api.get(`/api/v1/admin/requests?size=200${state.filters.productionDate ? `&productionDate=${state.filters.productionDate}` : ''}`);
+  state.requests = response?.content || [];
+}
+
+function openReopenClosurePanel(itemId) {
+  const request = state.requests.find(item => item.productionPlanItemId === itemId);
+  if (!request) return;
+  state.reopenClosure = request;
+  renderRequests();
+}
+
+function reopenClosurePanel() {
+  const request = state.reopenClosure;
+  if (!request) return '';
+  return `<section class="message warning reopen-closure-panel">
+    <strong>Reabrir este pedido no Fecho do Turno?</strong>
+    <div class="closure-confirmation-meta">
+      <span><strong>Pedido:</strong> ${pp.escapeHtml(request.requestCode || '-')}</span>
+      <span><strong>Cliente:</strong> ${pp.escapeHtml(request.customerNameSnapshot || '-')}</span>
+      <span><strong>Data do plano:</strong> ${pp.formatDate(request.productionDate)}</span>
+      <span><strong>Estado atual:</strong> ${pp.escapeHtml(request.lifecycleStatus || '-')}</span>
+    </div>
+    <p><strong>Fecho atual:</strong></p>
+    ${reopenQuantitySummary(request)}
+    <p>Ao reabrir, este fecho será revertido e o pedido voltará ao Fecho do Turno de ${pp.formatDate(request.productionDate)} para que as quantidades possam ser corrigidas.</p>
+    <label>Motivo da reabertura<textarea id="reopen-reason" rows="3"></textarea></label>
+    <div class="actions">
+      <button type="button" class="secondary" data-cancel-reopen>Cancelar</button>
+      <button type="button" data-confirm-reopen ${state.busy.reopenClosure ? 'disabled' : ''}>${state.busy.reopenClosure ? 'A reabrir...' : 'Confirmar reabertura'}</button>
+    </div>
+  </section>`;
+}
+
+function reopenQuantitySummary(request) {
+  const quantities = request.productionWheelQuantities || [];
+  return `<ul class="closure-confirmation-list">
+    ${['BIPARTITE', 'WASHED', 'NORMAL'].map(type => {
+      const quantity = quantities.find(item => item.type === type) || {};
+      return `<li><span>${typeLabel(type)} concluídas</span><strong>${quantity.completedQuantity || 0}</strong></li>`;
+    }).join('')}
+    <li><span>Total concluído</span><strong>${request.productionCompletedQuantity ?? 0}</strong></li>
+  </ul>`;
+}
+
+async function confirmReopenPlanItemClosure() {
+  const request = state.reopenClosure;
+  if (!request) return;
+  const reason = document.querySelector('#reopen-reason')?.value || '';
+  if (!reason.trim()) {
+    state.pageNotice = { type: 'error', message: 'O motivo da reabertura é obrigatório.' };
+    renderRequests();
+    return;
+  }
+  try {
+    state.busy.reopenClosure = true;
+    renderRequests();
+    await api.postJson(`/api/v1/admin/production-plans/${request.productionDate}/items/${request.productionPlanItemId}/reopen`, {
+      version: request.productionLineVersion,
+      reason: reason.trim()
+    });
+    state.date = request.productionDate;
+    state.view = 'closure';
+    state.highlightedClosureLineId = request.productionPlanItemId;
+    state.reopenClosure = null;
+    document.querySelector('#dashboard-date').value = state.date;
+    history.replaceState(null, '', `${location.pathname}${location.search}#closure`);
+    syncNavigation();
+    state.pageNotice = { type: 'success', message: `Pedido ${request.requestCode || '-'} reaberto com sucesso. O pedido voltou ao Fecho do Turno de ${pp.formatDate(request.productionDate)} para nova contabilização.` };
+    await loadAdminData();
+    render();
+    window.setTimeout(() => document.querySelector('.closure-card.highlighted')?.classList.remove('highlighted'), 6000);
+  } catch (error) {
+    state.pageNotice = { type: 'error', message: error.message || 'Não foi possível reabrir o fecho.' };
+    state.busy.reopenClosure = false;
+    renderRequests();
+  } finally {
+    state.busy.reopenClosure = false;
+  }
 }
 
 function renderFactoryArrivals() {
@@ -1307,6 +1858,7 @@ function diagnosticsSettingsMarkup() {
   const database = diagnostics?.database || {};
   const backend = diagnostics?.backend || {};
   const planning = diagnostics?.planning || {};
+  const whatsapp = diagnostics?.whatsapp || {};
   const diagnosticsAvailable = !!diagnostics && !state.diagnosticsError;
   return `
     <section class="panel">
@@ -1392,6 +1944,23 @@ function diagnosticsSettingsMarkup() {
           : '-'],
         ['Erro nos targets', planning.targetsErrorCode || '-'],
         ['Correlation ID planeamento', planning.correlationId || '-']
+      ])}
+    </section>
+    <section class="panel">
+      <div class="section-header"><h2>WhatsApp</h2></div>
+      ${diagnosticsTable([
+        ['Integração ativada', whatsapp.enabled ? 'Sim' : 'Não'],
+        ['Configuração do webhook', whatsapp.webhookConfigurationPresent ? 'Presente' : 'Ausente'],
+        ['Configuração de envio', whatsapp.sendConfigurationPresent ? 'Presente' : 'Ausente'],
+        ['Graph API', whatsapp.graphApiVersion || '-'],
+        ['URL pública configurada', whatsapp.webhookPublicUrlConfigured || '-'],
+        ['Último webhook recebido', pp.formatDateTime(whatsapp.lastWebhookReceivedAt)],
+        ['Última mensagem processada', pp.formatDateTime(whatsapp.lastMessageProcessedAt)],
+        ['Última mensagem enviada', whatsapp.lastOutboundMessageStatus || '-'],
+        ['Último erro', whatsapp.lastError || '-'],
+        ['Mensagens pendentes', diagnosticCount(whatsapp.pendingMessages)],
+        ['Cloud API', whatsapp.cloudApiStatus || '-'],
+        ['Correlation ID', whatsapp.correlationId || '-']
       ])}
     </section>`;
 }
@@ -1744,7 +2313,7 @@ function metric(label, value) {
 function arrivalItem(request) {
   return `<article class="list-item">
     <div class="row-between"><strong>${pp.escapeHtml(request.customerNameSnapshot)}</strong>${pp.badge(request.lifecycleStatus)}</div>
-    <div>Total: ${request.totalQuantity || request.expectedWheelQuantity} jantes · ${wheelSummary(request.wheelQuantities)} · ${pp.escapeHtml(request.driverName)}</div>
+    <div>Total: ${request.totalQuantity || request.expectedWheelQuantity} jantes · ${wheelSummary(request.wheelQuantities)} · ${pp.escapeHtml(request.driverName || 'Sem motorista')}</div>
     <div class="muted">Deixar na fábrica: ${pp.formatDateTime(request.expectedFactoryDropOffWindowStart)} a ${pp.formatDateTime(request.expectedFactoryDropOffWindowEnd)}</div>
     <div class="muted">Levantar na fábrica: ${pp.formatDateTime(request.requestedFactoryPickupWindowStart)} a ${pp.formatDateTime(request.requestedFactoryPickupWindowEnd)}</div>
   </article>`;
@@ -1764,6 +2333,16 @@ function wheelSummary(quantities = []) {
 
 function wheelSummaryText(quantities = []) {
   return `Bipartidas: ${quantityValue(quantities, 'BIPARTITE')}\nLavadas: ${quantityValue(quantities, 'WASHED')}\nNormais: ${quantityValue(quantities, 'NORMAL')}`;
+}
+
+function sourceLabel(source) {
+  return {
+    TELEGRAM: 'Telegram',
+    WHATSAPP: 'WhatsApp',
+    WHATSAPP_AGENT: 'WhatsApp',
+    MANUAL: 'Manual',
+    WEB: 'Aplicação'
+  }[source] || source || '-';
 }
 
 function wheelSummaryVertical(quantities = []) {
@@ -1842,10 +2421,35 @@ function validateClosureRow(row) {
   if (message) {
     error.textContent = message;
     error.classList.remove('hidden');
+    updateCloseButtonState(row, false);
     return false;
   }
   error.classList.add('hidden');
+  updateCloseButtonState(row, true);
   return true;
+}
+
+function updateCloseButtonState(row, valid) {
+  const button = row.querySelector('[data-close-line]');
+  const help = row.querySelector('[data-close-help]');
+  if (!button || !help) return;
+  const completed = rowCompletedTotal(row);
+  const disabled = !valid || completed <= 0;
+  button.disabled = disabled;
+  button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  if (disabled) {
+    button.title = completed <= 0
+      ? 'Não é possível fechar: nenhuma jante foi marcada como concluída.'
+      : 'Corrija as quantidades antes de fechar este trabalho no turno.';
+    help.textContent = completed <= 0
+      ? 'Indique pelo menos uma jante concluída para poder fechar este trabalho no turno.'
+      : 'Corrija as quantidades antes de fechar este trabalho no turno.';
+    help.classList.remove('hidden');
+  } else {
+    button.removeAttribute('title');
+    help.textContent = '';
+    help.classList.add('hidden');
+  }
 }
 
 function updateClosureTotals() {
@@ -1868,21 +2472,33 @@ function updateClosureTotals() {
 }
 
 function factoryWindow(start, end) {
-  if (!start || !end) return '-';
+  if (!start) return '—';
   const startDate = new Date(start);
+  if (Number.isNaN(startDate.getTime())) return '—';
+  const date = formatLocalDateCompact(startDate);
+  if (!end) {
+    return `<div class="date-cell"><strong>${date}</strong><span>Horário não definido</span></div>`;
+  }
   const endDate = new Date(end);
-  const date = new Intl.DateTimeFormat('pt-PT', {
-    timeZone: 'Europe/Lisbon',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric'
-  }).format(startDate);
+  if (Number.isNaN(endDate.getTime())) {
+    return `<div class="date-cell"><strong>${date}</strong><span>Horário não definido</span></div>`;
+  }
   const time = new Intl.DateTimeFormat('pt-PT', {
     timeZone: 'Europe/Lisbon',
     hour: '2-digit',
     minute: '2-digit'
   });
-  return `<div class="date-cell"><strong>${date}</strong><span>${time.format(startDate)}–${time.format(endDate)}</span></div>`;
+  const endLabel = formatLocalDateCompact(endDate) === date ? time.format(endDate) : 'madrugada';
+  return `<div class="date-cell"><strong>${date}</strong><span>${time.format(startDate)}–${endLabel}</span></div>`;
+}
+
+function formatLocalDateCompact(date) {
+  return new Intl.DateTimeFormat('pt-PT', {
+    timeZone: 'Europe/Lisbon',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(date);
 }
 
 function countryName(code) {

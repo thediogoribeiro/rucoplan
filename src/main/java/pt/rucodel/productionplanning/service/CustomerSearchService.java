@@ -3,6 +3,7 @@ package pt.rucodel.productionplanning.service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
 import pt.rucodel.productionplanning.repository.CustomerReferenceRepository;
 
@@ -44,20 +45,30 @@ public class CustomerSearchService {
 
     @Transactional(readOnly = true)
     public List<CustomerReferenceEntity> exactNormalized(String name) {
+        return exactNormalized(ProductionSiteCode.PT, name);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerReferenceEntity> exactNormalized(ProductionSiteCode siteCode, String name) {
         String normalized = normalizer.normalize(name);
         if (normalized.isBlank()) {
             return List.of();
         }
-        return customers.findByActiveTrueAndNormalizedNameOrderByNameAscIdAsc(normalized);
+        return customers.findActiveByNormalizedNameForSite(siteCode, normalized);
     }
 
     @Transactional(readOnly = true)
     public List<CustomerSearchResult> suggest(String name) {
+        return suggest(ProductionSiteCode.PT, name);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerSearchResult> suggest(ProductionSiteCode siteCode, String name) {
         String normalizedQuery = normalizer.normalize(name);
         if (normalizedQuery.isBlank()) {
             return List.of();
         }
-        return customers.findByActiveTrueOrderByName().stream()
+        return customers.findActiveForSite(siteCode).stream()
                 .map(customer -> new CustomerSearchResult(customer,
                         score(normalizedQuery, ensureNormalized(customer)),
                         distinction(customer)))

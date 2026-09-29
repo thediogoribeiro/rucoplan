@@ -18,22 +18,28 @@ import java.time.OffsetDateTime;
 @Service
 public class MessagingIdentityService {
     public static final String DEFAULT_TELEGRAM_INTEGRATION_KEY = "RUCODEL_TELEGRAM_BOT";
+    public static final String DEFAULT_WHATSAPP_INTEGRATION_KEY = "RUCODEL_WHATSAPP_CLOUD_API";
 
     private final MessagingIdentityRepository identities;
     private final MessagingIdentityEventRepository events;
     private final Clock clock;
     private final String telegramIntegrationKey;
+    private final String whatsappIntegrationKey;
 
     public MessagingIdentityService(MessagingIdentityRepository identities,
                                     MessagingIdentityEventRepository events,
                                     Clock clock,
-                                    @Value("${app.integrations.telegram.bot-username:RucodelPlanBot}") String telegramBotUsername) {
+                                    @Value("${app.integrations.telegram.bot-username:RucodelPlanBot}") String telegramBotUsername,
+                                    @Value("${app.integrations.whatsapp.phone-number-id:}") String whatsappPhoneNumberId) {
         this.identities = identities;
         this.events = events;
         this.clock = clock;
         this.telegramIntegrationKey = telegramBotUsername == null || telegramBotUsername.isBlank()
                 ? DEFAULT_TELEGRAM_INTEGRATION_KEY
                 : telegramBotUsername.trim();
+        this.whatsappIntegrationKey = whatsappPhoneNumberId == null || whatsappPhoneNumberId.isBlank()
+                ? DEFAULT_WHATSAPP_INTEGRATION_KEY
+                : whatsappPhoneNumberId.trim();
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -69,6 +75,49 @@ public class MessagingIdentityService {
         return saved;
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
+    public MessagingIdentityEntity resolveWhatsAppIdentity(WhatsAppIdentitySnapshot snapshot) {
+        String externalUserId = snapshot.waId();
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        MessagingIdentityEntity identity = identities.findWithLockByChannelAndIntegrationKeyAndExternalUserId(
+                        MessagingChannel.WHATSAPP, whatsappIntegrationKey, externalUserId)
+                .orElseGet(() -> createWhatsAppIdentity(snapshot, now));
+
+        boolean profileChanged = updateWhatsAppMutableFields(identity, snapshot, now);
+        if (profileChanged) {
+            record(identity, MessagingIdentityEventType.PROFILE_UPDATED, "WHATSAPP", mask(externalUserId), null);
+        }
+        return identity;
+    }
+
+    private MessagingIdentityEntity createWhatsAppIdentity(WhatsAppIdentitySnapshot snapshot, OffsetDateTime now) {
+        MessagingIdentityEntity identity = new MessagingIdentityEntity();
+        identity.setChannel(MessagingChannel.WHATSAPP);
+        identity.setIntegrationKey(whatsappIntegrationKey);
+        identity.setExternalUserId(snapshot.waId());
+        identity.setExternalChatId(snapshot.waId());
+        identity.setFirstSeenAt(now);
+        identity.setLastSeenAt(now);
+        identity.setOnboardingStatus(MessagingIdentityOnboardingStatus.AWAITING_DRIVER_NAME);
+        identity.setCreatedBy("WHATSAPP");
+        identity.setUpdatedBy("WHATSAPP");
+        updateWhatsAppMutableFields(identity, snapshot, now);
+        MessagingIdentityEntity saved = identities.saveAndFlush(identity);
+        record(saved, MessagingIdentityEventType.FIRST_SEEN, "WHATSAPP", mask(identity.getExternalUserId()), null);
+        record(saved, MessagingIdentityEventType.ONBOARDING_STARTED, "WHATSAPP", mask(identity.getExternalUserId()), null);
+        return saved;
+    }
+
+    private boolean updateWhatsAppMutableFields(MessagingIdentityEntity identity, WhatsAppIdentitySnapshot snapshot, OffsetDateTime now) {
+        boolean changed = false;
+        changed |= setIfChanged(identity.getExternalChatId(), snapshot.waId(), identity::setExternalChatId);
+        changed |= setIfChanged(identity.getPhoneNumber(), blankToNull(snapshot.phoneNumber()), identity::setPhoneNumber);
+        changed |= setIfChanged(identity.getPlatformFirstName(), blankToNull(snapshot.profileName()), identity::setPlatformFirstName);
+        identity.setLastSeenAt(now);
+        identity.setUpdatedBy("WHATSAPP");
+        return changed;
+    }
+
     private boolean updateTelegramMutableFields(MessagingIdentityEntity identity, TelegramIdentitySnapshot snapshot, OffsetDateTime now) {
         boolean changed = false;
         changed |= setIfChanged(identity.getExternalChatId(), String.valueOf(snapshot.chatId()), identity::setExternalChatId);
@@ -85,8 +134,9 @@ public class MessagingIdentityService {
     public void completeOnboarding(MessagingIdentityEntity identity) {
         identity.setOnboardingStatus(MessagingIdentityOnboardingStatus.COMPLETED);
         identity.setOnboardingCompletedAt(OffsetDateTime.now(clock));
-        identity.setUpdatedBy("TELEGRAM");
-        record(identity, MessagingIdentityEventType.ONBOARDING_COMPLETED, "TELEGRAM", identity.getExternalUserId(), null);
+        String actor = identity.getChannel() == MessagingChannel.WHATSAPP ? "WHATSAPP" : "TELEGRAM";
+        identity.setUpdatedBy(actor);
+        record(identity, MessagingIdentityEventType.ONBOARDING_COMPLETED, actor, safeActorId(identity), null);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -103,6 +153,21 @@ public class MessagingIdentityService {
 
     public String telegramIntegrationKey() {
         return telegramIntegrationKey;
+    }
+
+    public String whatsappIntegrationKey() {
+        return whatsappIntegrationKey;
+    }
+
+    private String safeActorId(MessagingIdentityEntity identity) {
+        return identity.getChannel() == MessagingChannel.WHATSAPP ? mask(identity.getExternalUserId()) : identity.getExternalUserId();
+    }
+
+    private String mask(String value) {
+        if (value == null || value.length() <= 4) {
+            return "****";
+        }
+        return "****" + value.substring(value.length() - 4);
     }
 
     private boolean setIfChanged(String current, String next, java.util.function.Consumer<String> setter) {

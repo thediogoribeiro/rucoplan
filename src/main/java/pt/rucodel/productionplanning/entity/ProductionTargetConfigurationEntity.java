@@ -9,12 +9,19 @@ import java.util.UUID;
 @Entity
 @Table(
         name = "production_target_configuration",
-        indexes = @Index(name = "idx_target_configuration_effective_from", columnList = "effective_from")
+        indexes = {
+                @Index(name = "idx_target_configuration_site_effective_from", columnList = "production_site_id, effective_from"),
+                @Index(name = "idx_target_configuration_effective_from", columnList = "effective_from")
+        }
 )
 public class ProductionTargetConfigurationEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id = UUID.randomUUID();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @Column(name = "minimum_daily_target", nullable = false)
     private int minimumDailyTarget;
@@ -46,6 +53,14 @@ public class ProductionTargetConfigurationEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public int getMinimumDailyTarget() {

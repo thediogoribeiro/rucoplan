@@ -3,12 +3,15 @@ package pt.rucodel.productionplanning.service;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.dto.DriverRequest;
 import pt.rucodel.productionplanning.dto.DriverResponse;
 import pt.rucodel.productionplanning.dto.AdminDriverDetailResponse;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
 import pt.rucodel.productionplanning.exception.InvalidRequestException;
 import pt.rucodel.productionplanning.mapper.ApiMapper;
@@ -27,11 +30,13 @@ public class DriverService {
     private final RecalculationService recalculationService;
     private final AdminMessagingIdentityService adminMessagingIdentities;
     private final PublicCodeService publicCodes;
+    private final ProductionSiteService productionSites;
 
     public DriverService(DriverRepository drivers, ApplicationUserRepository users, PasswordEncoder passwordEncoder,
                          ApiMapper mapper, RecalculationService recalculationService,
                          AdminMessagingIdentityService adminMessagingIdentities,
-                         PublicCodeService publicCodes) {
+                         PublicCodeService publicCodes,
+                         ProductionSiteService productionSites) {
         this.drivers = drivers;
         this.users = users;
         this.passwordEncoder = passwordEncoder;
@@ -39,11 +44,17 @@ public class DriverService {
         this.recalculationService = recalculationService;
         this.adminMessagingIdentities = adminMessagingIdentities;
         this.publicCodes = publicCodes;
+        this.productionSites = productionSites;
     }
 
     @Transactional(readOnly = true)
     public List<DriverResponse> list() {
-        return drivers.findAll().stream().map(mapper::toDriver).toList();
+        return list(ProductionSiteCode.PT);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DriverResponse> list(ProductionSiteCode siteCode) {
+        return drivers.findActiveForSite(siteCode).stream().map(mapper::toDriver).toList();
     }
 
     @Transactional(readOnly = true)
@@ -54,17 +65,24 @@ public class DriverService {
 
     @Transactional
     public DriverResponse create(DriverRequest request, String actor) {
+        return create(ProductionSiteCode.PT, request, actor);
+    }
+
+    @Transactional
+    public DriverResponse create(ProductionSiteCode siteCode, DriverRequest request, String actor) {
+        ProductionSiteEntity site = productionSites.requireActive(siteCode);
         DriverEntity driver = new DriverEntity();
         apply(driver, request);
         driver.setDriverCode(publicCodes.driverCode(drivers.nextDriverCodeNumber()));
         driver.setCreatedBy(actor);
         driver.setUpdatedBy(actor);
         DriverEntity saved = drivers.save(driver);
+        productionSites.ensureDriverAssociation(saved, site, DriverProductionSiteAssociationSource.ADMIN, actor);
         if (request.username() != null && !request.username().isBlank()) {
             if (request.password() == null || request.password().isBlank()) {
                 throw new InvalidRequestException("Driver account password is required.");
             }
-            createDriverUser(saved, request.username(), request.password(), actor);
+            createDriverUser(saved, site, request.username(), request.password(), actor);
         }
         recalculationService.markCurrentAndFuturePlans();
         return mapper.toDriver(saved);
@@ -93,7 +111,7 @@ public class DriverService {
         driver.setActive(request.active() == null || request.active());
     }
 
-    private void createDriverUser(DriverEntity driver, String username, String password, String actor) {
+    private void createDriverUser(DriverEntity driver, ProductionSiteEntity site, String username, String password, String actor) {
         if (users.existsByUsername(username.trim())) {
             throw new InvalidRequestException("DUPLICATE_USER", "A user with that username already exists.");
         }
@@ -106,7 +124,8 @@ public class DriverService {
         user.setActive(true);
         user.setCreatedBy(actor);
         user.setUpdatedBy(actor);
-        users.save(user);
+        ApplicationUserEntity saved = users.save(user);
+        productionSites.ensureUserAssociation(saved, site, actor);
     }
 
     private String blankToNull(String value) {

@@ -10,6 +10,7 @@ import java.util.UUID;
 @Table(
         name = "customer_registration_request",
         indexes = {
+                @Index(name = "idx_customer_registration_site_status", columnList = "production_site_id, status"),
                 @Index(name = "idx_customer_registration_status", columnList = "status"),
                 @Index(name = "idx_customer_registration_normalized", columnList = "normalized_name"),
                 @Index(name = "idx_customer_registration_driver", columnList = "requested_by_driver_id")
@@ -19,6 +20,10 @@ public class CustomerRegistrationRequestEntity extends BaseEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @Column(name = "proposed_name", nullable = false, length = 255)
     private String proposedName;
@@ -83,6 +88,14 @@ public class CustomerRegistrationRequestEntity extends BaseEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public String getProposedName() {

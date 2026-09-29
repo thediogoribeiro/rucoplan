@@ -9,11 +9,15 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "planning_run")
+@Table(name = "planning_run", indexes = @Index(name = "idx_planning_run_site_started", columnList = "production_site_id, started_at"))
 public class PlanningRunEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id = UUID.randomUUID();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "trigger", nullable = false, length = 40)
@@ -43,6 +47,14 @@ public class PlanningRunEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public GenerationTrigger getTrigger() {

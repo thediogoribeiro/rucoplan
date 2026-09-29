@@ -4,8 +4,11 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import pt.rucodel.productionplanning.domain.GenerationTrigger;
@@ -19,6 +22,8 @@ import java.util.UUID;
 @Table(
         name = "production_plan",
         indexes = {
+                @Index(name = "idx_production_plan_site_date_version", columnList = "production_site_id, planning_date, version_number"),
+                @Index(name = "idx_production_plan_site_current", columnList = "production_site_id, planning_date, current_plan"),
                 @Index(name = "idx_production_plan_date_version", columnList = "planning_date, version_number"),
                 @Index(name = "idx_production_plan_current", columnList = "planning_date, current_plan")
         }
@@ -27,6 +32,10 @@ public class ProductionPlanEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id = UUID.randomUUID();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @Column(name = "planning_date", nullable = false)
     private LocalDate planningDate;
@@ -130,6 +139,14 @@ public class ProductionPlanEntity {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public LocalDate getPlanningDate() {

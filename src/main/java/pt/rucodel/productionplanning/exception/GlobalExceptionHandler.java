@@ -43,6 +43,7 @@ public class GlobalExceptionHandler {
             case "DUPLICATE_MESSAGE", "OPTIMISTIC_LOCK", "AMBIGUOUS_CUSTOMER", "PRODUCTION_PLAN_CLOSED",
                  "PRODUCTION_PLAN_CONFLICT" -> HttpStatus.CONFLICT;
             case "AUTHENTICATION_FAILED" -> HttpStatus.UNAUTHORIZED;
+            case "PLAN_ITEM_NO_COMPLETED_QUANTITY" -> HttpStatus.UNPROCESSABLE_ENTITY;
             default -> HttpStatus.BAD_REQUEST;
         };
         return response(status, error(status, ex.errorCode(), ex.getMessage(), request.getRequestURI(), List.of(), correlationId(request)));

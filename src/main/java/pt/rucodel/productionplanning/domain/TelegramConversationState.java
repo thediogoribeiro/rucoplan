@@ -3,6 +3,7 @@ package pt.rucodel.productionplanning.domain;
 public enum TelegramConversationState {
     AWAITING_DRIVER_NAME,
     IDLE,
+    AWAITING_PRODUCTION_SITE,
     AWAITING_CUSTOMER,
     AWAITING_CUSTOMER_NAME,
     AWAITING_CUSTOMER_SELECTION,

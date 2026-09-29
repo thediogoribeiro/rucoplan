@@ -13,6 +13,7 @@ import pt.rucodel.productionplanning.repository.*;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 import pt.rucodel.productionplanning.service.ProductionSettingsService;
 import pt.rucodel.productionplanning.service.ProductionPlanService;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 import pt.rucodel.productionplanning.service.WheelIntakeRequestService;
 
 import java.time.*;
@@ -40,9 +41,12 @@ class CapacityAlertIntegrationTest {
     @jakarta.annotation.Resource TelegramIntakeDraftRepository drafts;
     @jakarta.annotation.Resource TelegramInboundUpdateRepository inboundUpdates;
     @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
+    @jakarta.annotation.Resource ProductionSiteService productionSites;
+    @jakarta.annotation.Resource DriverProductionSiteRepository driverSites;
 
     private DriverEntity driver;
     private CustomerReferenceEntity customer;
+    private ProductionSiteEntity portugal;
     private LocalDate date;
     private ZoneId zone;
 
@@ -60,11 +64,15 @@ class CapacityAlertIntegrationTest {
         requests.deleteAll();
         settings.deleteAll();
         customers.deleteAll();
+        driverSites.deleteAll();
         drivers.deleteAll();
 
         zone = ZoneId.of("Europe/Lisbon");
         date = LocalDate.of(2099, 9, 10);
+        portugal = productionSites.requireByCode(ProductionSiteCode.PT);
         driver = drivers.save(driver("Motorista"));
+        productionSites.ensureDriverAssociation(driver, portugal,
+                DriverProductionSiteAssociationSource.ADMIN, "TEST");
         customer = customers.save(customer("Cliente"));
         settings.save(settings(date, 10));
     }
@@ -161,6 +169,7 @@ class CapacityAlertIntegrationTest {
 
     private CustomerReferenceEntity customer(String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(portugal);
         entity.setName(name);
         entity.setActive(true);
         entity.setCreatedBy("TEST");

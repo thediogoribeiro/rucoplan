@@ -24,12 +24,12 @@ public class FactoryArrivalController {
 
     @GetMapping
     public List<RequestResponse> list(@RequestParam(required = false) LifecycleStatus status) {
-        return requests.listFactoryArrivals(status);
+        return requests.listFactoryArrivals(currentUserService.requireUser().productionSiteCode(), status);
     }
 
     @GetMapping("/{requestId}")
     public RequestResponse get(@PathVariable UUID requestId) {
-        return requests.getForAdmin(requestId);
+        return requests.getForAdmin(currentUserService.requireUser().productionSiteCode(), requestId);
     }
 
     @PostMapping("/{requestId}/confirm")

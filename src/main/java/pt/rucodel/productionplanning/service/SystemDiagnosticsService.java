@@ -8,8 +8,10 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import pt.rucodel.productionplanning.domain.LifecycleStatus;
+import pt.rucodel.productionplanning.domain.IngestionStatus;
 import pt.rucodel.productionplanning.domain.PlanningTargetDefaults;
 import pt.rucodel.productionplanning.domain.ProductionPlanStatus;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.dto.SystemDiagnosticsResponse;
 import pt.rucodel.productionplanning.entity.PlanningRunEntity;
 import pt.rucodel.productionplanning.entity.ProductionTargetConfigurationEntity;
@@ -17,6 +19,8 @@ import pt.rucodel.productionplanning.repository.PlanningRunRepository;
 import pt.rucodel.productionplanning.repository.ProductionPlanItemRepository;
 import pt.rucodel.productionplanning.repository.ProductionPlanRepository;
 import pt.rucodel.productionplanning.repository.WheelIntakeRequestRepository;
+import pt.rucodel.productionplanning.repository.WhatsAppIngestionItemRepository;
+import pt.rucodel.productionplanning.whatsapp.WhatsAppProperties;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -37,6 +41,8 @@ public class SystemDiagnosticsService {
     private final ProductionPlanItemRepository planItems;
     private final PlanningRunRepository planningRuns;
     private final ProductionTargetService targetService;
+    private final WhatsAppIngestionItemRepository whatsappMessages;
+    private final WhatsAppProperties whatsappProperties;
     private final Clock clock;
     private final ZoneId businessZone;
     private final String version;
@@ -49,6 +55,8 @@ public class SystemDiagnosticsService {
                                     ProductionPlanItemRepository planItems,
                                     PlanningRunRepository planningRuns,
                                     ProductionTargetService targetService,
+                                    WhatsAppIngestionItemRepository whatsappMessages,
+                                    WhatsAppProperties whatsappProperties,
                                     Clock clock,
                                     AppProperties appProperties,
                                     Environment environment,
@@ -60,6 +68,8 @@ public class SystemDiagnosticsService {
         this.planItems = planItems;
         this.planningRuns = planningRuns;
         this.targetService = targetService;
+        this.whatsappMessages = whatsappMessages;
+        this.whatsappProperties = whatsappProperties;
         this.clock = clock;
         this.businessZone = ZoneId.of(appProperties.timezone());
         this.environment = environment;
@@ -67,11 +77,15 @@ public class SystemDiagnosticsService {
     }
 
     public SystemDiagnosticsResponse diagnostics() {
+        return diagnostics(ProductionSiteCode.PT);
+    }
+
+    public SystemDiagnosticsResponse diagnostics(ProductionSiteCode siteCode) {
         long started = System.nanoTime();
         OffsetDateTime checkedAt = OffsetDateTime.now(clock);
         SystemDiagnosticsResponse.DatabaseDiagnostics database = databaseDiagnostics();
         SystemDiagnosticsResponse.PlanningDiagnostics planning = "UP".equals(database.status())
-                ? planningDiagnostics()
+                ? planningDiagnostics(siteCode)
                 : unavailablePlanningDiagnostics();
         long latencyMs = elapsedMs(started);
         return new SystemDiagnosticsResponse(
@@ -86,7 +100,38 @@ public class SystemDiagnosticsService {
                 ),
                 database,
                 realtimeDiagnostics(),
-                planning
+                planning,
+                whatsappDiagnostics()
+        );
+    }
+
+    private SystemDiagnosticsResponse.WhatsAppDiagnostics whatsappDiagnostics() {
+        DiagnosticValue<Long> pending = queryDiagnostic("whatsapp pending count",
+                "WHATSAPP_PENDING_QUERY_FAILED",
+                () -> whatsappMessages.countByStatus(IngestionStatus.NEEDS_REVIEW));
+        var lastReceived = queryDiagnostic("whatsapp last webhook",
+                "WHATSAPP_LAST_WEBHOOK_QUERY_FAILED",
+                () -> whatsappMessages.findFirstByOrderByReceivedAtDesc().orElse(null));
+        var lastProcessed = queryDiagnostic("whatsapp last processed",
+                "WHATSAPP_LAST_PROCESSED_QUERY_FAILED",
+                () -> whatsappMessages.findFirstByProcessedAtIsNotNullOrderByProcessedAtDesc().orElse(null));
+        String error = null;
+        if (lastProcessed.value() != null && lastProcessed.value().getLastError() != null) {
+            error = lastProcessed.value().getLastError();
+        }
+        return new SystemDiagnosticsResponse.WhatsAppDiagnostics(
+                whatsappProperties.enabled(),
+                whatsappProperties.hasRequiredWebhookConfiguration(),
+                whatsappProperties.hasRequiredSendConfiguration(),
+                whatsappProperties.effectiveGraphApiVersion(),
+                whatsappProperties.webhookPublicUrl() == null || whatsappProperties.webhookPublicUrl().isBlank() ? "NO" : "YES",
+                lastReceived.value() == null ? null : lastReceived.value().getReceivedAt(),
+                lastProcessed.value() == null ? null : lastProcessed.value().getProcessedAt(),
+                lastProcessed.value() == null || lastProcessed.value().getOutboundMessageId() == null ? null : "SENT",
+                error,
+                pending.value(),
+                whatsappProperties.enabled() && whatsappProperties.hasRequiredSendConfiguration() ? "CONFIGURED" : "NOT_CONFIGURED",
+                firstCorrelationId(pending, lastReceived, lastProcessed)
         );
     }
 
@@ -128,25 +173,25 @@ public class SystemDiagnosticsService {
         return dashboardSseService.diagnostics();
     }
 
-    private SystemDiagnosticsResponse.PlanningDiagnostics planningDiagnostics() {
+    private SystemDiagnosticsResponse.PlanningDiagnostics planningDiagnostics(ProductionSiteCode siteCode) {
         DiagnosticValue<Long> confirmedRequests = queryDiagnostic("confirmed requests count",
                 "PLANNING_COMMUNICATED_REQUESTS_QUERY_FAILED",
-                () -> requests.countByLifecycleStatus(LifecycleStatus.COMMUNICATED));
+                () -> requests.countByLifecycleStatusForSite(siteCode, LifecycleStatus.COMMUNICATED));
         DiagnosticValue<Long> openPlans = queryDiagnostic("open plans count",
                 "PLANNING_OPEN_PLANS_QUERY_FAILED",
-                () -> plans.countByCurrentPlanTrueAndStatusNot(ProductionPlanStatus.CLOSED));
+                () -> plans.countByProductionSite_CodeAndCurrentPlanTrueAndStatusNot(siteCode, ProductionPlanStatus.CLOSED));
         DiagnosticValue<Long> planLines = queryDiagnostic("plan lines count",
                 "PLANNING_LINES_QUERY_FAILED",
-                planItems::count);
+                () -> planItems.countByProductionSite_Code(siteCode));
         DiagnosticValue<LocalDate> latestPlanDate = queryDiagnostic("latest plan date",
                 "PLANNING_LATEST_PLAN_QUERY_FAILED",
-                plans::findMaxCurrentPlanningDate);
+                () -> plans.findMaxCurrentPlanningDateForSite(siteCode));
         DiagnosticValue<PlanningRunEntity> lastRun = queryDiagnostic("last planning run",
                 "PLANNING_LAST_RUN_QUERY_FAILED",
-                () -> planningRuns.findFirstByOrderByStartedAtDesc().orElse(null));
+                () -> planningRuns.findFirstByProductionSite_CodeOrderByStartedAtDesc(siteCode).orElse(null));
         DiagnosticValue<SystemDiagnosticsResponse.TargetSnapshot> target = queryDiagnostic("active planning targets",
                 "PLANNING_TARGETS_QUERY_FAILED",
-                this::targetSnapshot);
+                () -> targetSnapshot(siteCode));
         String correlationId = firstCorrelationId(
                 confirmedRequests,
                 openPlans,
@@ -220,8 +265,8 @@ public class SystemDiagnosticsService {
         }
     }
 
-    private SystemDiagnosticsResponse.TargetSnapshot targetSnapshot() {
-        ProductionTargetConfigurationEntity target = targetService.effectiveFor(LocalDate.now(clock.withZone(businessZone)));
+    private SystemDiagnosticsResponse.TargetSnapshot targetSnapshot(ProductionSiteCode siteCode) {
+        ProductionTargetConfigurationEntity target = targetService.effectiveFor(siteCode, LocalDate.now(clock.withZone(ZoneId.of(siteCode.timezone()))));
         return new SystemDiagnosticsResponse.TargetSnapshot(
                 target.getMinimumDailyTarget(),
                 target.getRegularDailyCapacity(),

@@ -58,6 +58,14 @@ app:
       webhook-base-url: ${TELEGRAM_WEBHOOK_BASE_URL:}
     whatsapp:
       token: ${APP_WHATSAPP_INTEGRATION_TOKEN:}
+      enabled: ${WHATSAPP_ENABLED:false}
+      access-token: ${WHATSAPP_ACCESS_TOKEN:}
+      app-secret: ${WHATSAPP_APP_SECRET:}
+      verify-token: ${WHATSAPP_VERIFY_TOKEN:}
+      phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
+      business-account-id: ${WHATSAPP_BUSINESS_ACCOUNT_ID:}
+      graph-api-version: ${WHATSAPP_GRAPH_API_VERSION:v26.0}
+      webhook-public-url: ${WHATSAPP_WEBHOOK_PUBLIC_URL:}
     rucofi:
       enabled: ${RUCOFI_INTEGRATION_ENABLED:false}
       base-url: ${RUCOFI_BASE_URL:}

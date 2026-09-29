@@ -16,6 +16,7 @@ import pt.rucodel.productionplanning.service.CustomerResolutionResultType;
 import pt.rucodel.productionplanning.service.CustomerResolutionService;
 import pt.rucodel.productionplanning.service.CustomerSearchResult;
 import pt.rucodel.productionplanning.service.MessagingIdentityService;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 import pt.rucodel.productionplanning.service.TelegramIdentitySnapshot;
 import pt.rucodel.productionplanning.service.WheelIntakeRequestService;
 
@@ -46,6 +47,7 @@ public class TelegramUpdateProcessor {
     private final CustomerRegistrationRequestService customerRegistrationRequests;
     private final MessagingIdentityService messagingIdentities;
     private final DriverRegistrationService driverRegistration;
+    private final ProductionSiteService productionSites;
     private final Clock clock;
     private final ZoneId businessZone;
     private final LocalTime overnightEndTime;
@@ -63,6 +65,7 @@ public class TelegramUpdateProcessor {
                                    CustomerRegistrationRequestService customerRegistrationRequests,
                                    MessagingIdentityService messagingIdentities,
                                    DriverRegistrationService driverRegistration,
+                                   ProductionSiteService productionSites,
                                    Clock clock,
                                    pt.rucodel.productionplanning.service.AppProperties appProperties,
                                    @Value("${app.planning.overnight-end-time:06:00}") String overnightEndTime) {
@@ -79,6 +82,7 @@ public class TelegramUpdateProcessor {
         this.customerRegistrationRequests = customerRegistrationRequests;
         this.messagingIdentities = messagingIdentities;
         this.driverRegistration = driverRegistration;
+        this.productionSites = productionSites;
         this.clock = clock;
         this.businessZone = ZoneId.of(appProperties.timezone());
         this.overnightEndTime = LocalTime.parse(overnightEndTime);
@@ -331,6 +335,7 @@ public class TelegramUpdateProcessor {
     private void routeState(TelegramConversationEntity conversation, DriverEntity driver, Long chatId, String text) {
         switch (conversation.getState()) {
             case IDLE -> startDraft(conversation, driver, chatId);
+            case AWAITING_PRODUCTION_SITE -> handleProductionSite(conversation, driver, chatId, text);
             case AWAITING_CUSTOMER, AWAITING_CUSTOMER_NAME -> handleCustomerName(conversation, chatId, text);
             case AWAITING_CUSTOMER_SELECTION -> handleCustomerSelection(conversation, chatId, text);
             case AWAITING_NEW_CUSTOMER_CONFIRMATION, AWAITING_NEW_CUSTOMER_NAME_CONFIRMATION -> handleNewCustomerNameConfirmation(conversation, chatId, text);
@@ -363,9 +368,55 @@ public class TelegramUpdateProcessor {
         draft.setUpdatedBy("TELEGRAM");
         TelegramIntakeDraftEntity saved = drafts.saveAndFlush(draft);
         conversation.setActiveDraft(saved);
-        conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
+        conversation.setState(TelegramConversationState.AWAITING_PRODUCTION_SITE);
         conversations.save(conversation);
-        botClient.sendMessage(chatId, conversationFlow.customerQuestion());
+        botClient.sendMessage(chatId, productionSiteQuestion(), productionSiteKeyboard());
+    }
+
+    private void handleProductionSite(TelegramConversationEntity conversation, DriverEntity driver, Long chatId, String text) {
+        TelegramIntakeDraftEntity draft = requireDraft(conversation);
+        ProductionSiteCode siteCode = parseProductionSite(text);
+        if (siteCode == null) {
+            botClient.sendMessage(chatId, "Escolha 1 para Portugal ou 2 para Luxemburgo.", productionSiteKeyboard());
+            return;
+        }
+        ProductionSiteEntity site = productionSites.requireActive(siteCode);
+        draft.setProductionSite(site);
+        draft.setCustomer(null);
+        draft.setCustomerRegistrationRequest(null);
+        draft.setCustomerCandidateIds(null);
+        draft.setUpdatedBy("TELEGRAM");
+        productionSites.ensureDriverAssociation(driver, site, DriverProductionSiteAssociationSource.TELEGRAM_SELECTION, "TELEGRAM");
+        conversation.setState(TelegramConversationState.AWAITING_CUSTOMER_NAME);
+        drafts.save(draft);
+        conversations.save(conversation);
+        botClient.sendMessage(chatId, "Unidade de produção: " + site.getDisplayName() + "\n\n" + conversationFlow.customerQuestion());
+    }
+
+    private String productionSiteQuestion() {
+        return """
+                Para qual unidade de produção é este pedido?
+
+                1 — Portugal
+                2 — Luxemburgo""";
+    }
+
+    private List<List<TelegramButton>> productionSiteKeyboard() {
+        return List.of(List.of(
+                new TelegramButton("Portugal", "PT"),
+                new TelegramButton("Luxemburgo", "LUX")
+        ));
+    }
+
+    private ProductionSiteCode parseProductionSite(String text) {
+        String normalized = normalizeCommandText(text);
+        if (normalized.equals("1") || normalized.equals("pt") || normalized.equals("portugal")) {
+            return ProductionSiteCode.PT;
+        }
+        if (normalized.equals("2") || normalized.equals("lux") || normalized.equals("luxemburgo") || normalized.equals("luxembourg")) {
+            return ProductionSiteCode.LUX;
+        }
+        return null;
     }
 
     private TelegramIntakeDraftEntity activeDraft(TelegramConversationEntity conversation, DriverEntity driver) {
@@ -806,11 +857,13 @@ public class TelegramUpdateProcessor {
     }
 
     private void handleDropoffDate(TelegramConversationEntity conversation, Long chatId, String text) {
-        LocalDate date = parseFutureDate(text, chatId, "5/10 — Em que data serão deixadas na fábrica? Responda no formato DD/MM/AAAA.");
+        TelegramIntakeDraftEntity draft = requireDraft(conversation);
+        LocalDate date = parseFutureDate(text, chatId,
+                "5/10 — Em que data serão deixadas na fábrica? Responda no formato DD/MM/AAAA.",
+                zoneFor(draft));
         if (date == null) {
             return;
         }
-        TelegramIntakeDraftEntity draft = requireDraft(conversation);
         draft.setFactoryDropoffDate(date);
         if (draft.getReadyDate() != null && draft.getReadyDate().isBefore(date)) {
             draft.setReadyDate(null);
@@ -985,10 +1038,11 @@ public class TelegramUpdateProcessor {
             askForCurrentState(conversation, chatId);
             return;
         }
-        OffsetDateTime dropoffStart = draft.getFactoryDropoffSlot().startAt(draft.getFactoryDropoffDate(), businessZone);
-        OffsetDateTime dropoffEnd = draft.getFactoryDropoffSlot().endAt(draft.getFactoryDropoffDate(), businessZone, overnightEndTime);
-        OffsetDateTime pickupStart = draft.getFactoryPickupSlot().startAt(draft.getReadyDate(), businessZone);
-        OffsetDateTime pickupEnd = draft.getFactoryPickupSlot().endAt(draft.getReadyDate(), businessZone, overnightEndTime);
+        ZoneId siteZone = zoneFor(draft);
+        OffsetDateTime dropoffStart = draft.getFactoryDropoffSlot().startAt(draft.getFactoryDropoffDate(), siteZone);
+        OffsetDateTime dropoffEnd = draft.getFactoryDropoffSlot().endAt(draft.getFactoryDropoffDate(), siteZone, overnightEndTime);
+        OffsetDateTime pickupStart = draft.getFactoryPickupSlot().startAt(draft.getReadyDate(), siteZone);
+        OffsetDateTime pickupEnd = draft.getFactoryPickupSlot().endAt(draft.getReadyDate(), siteZone, overnightEndTime);
         WheelIntakeRequestEntity request = draft.getCustomer() == null
                 ? intakeRequests.createFromTelegramWithPendingCustomer(
                 "telegram-draft-" + draft.getId(),
@@ -1056,7 +1110,8 @@ public class TelegramUpdateProcessor {
     }
 
     private boolean complete(TelegramIntakeDraftEntity draft) {
-        return (draft.getCustomer() != null || draft.getCustomerRegistrationRequest() != null)
+        return draft.getProductionSite() != null
+                && (draft.getCustomer() != null || draft.getCustomerRegistrationRequest() != null)
                 && draft.wheelQuantity(WheelType.BIPARTITE) != null
                 && draft.wheelQuantity(WheelType.WASHED) != null
                 && draft.wheelQuantity(WheelType.NORMAL) != null
@@ -1067,13 +1122,13 @@ public class TelegramUpdateProcessor {
                 && draft.getFactoryPickupSlot() != null;
     }
 
-    private LocalDate parseFutureDate(String text, Long chatId, String question) {
+    private LocalDate parseFutureDate(String text, Long chatId, String question, ZoneId zone) {
         LocalDate date = parseDate(text);
         if (date == null) {
             botClient.sendMessage(chatId, "A data é inválida. Use o formato DD/MM/AAAA.\n\n" + question);
             return null;
         }
-        LocalDate today = LocalDate.now(clock.withZone(businessZone));
+        LocalDate today = LocalDate.now(clock.withZone(zone));
         if (date.isBefore(today)) {
             botClient.sendMessage(chatId, "A data não pode ser passada.\n\n" + question);
             return null;
@@ -1091,6 +1146,7 @@ public class TelegramUpdateProcessor {
 
     private void askForCurrentState(TelegramConversationEntity conversation, Long chatId) {
         switch (conversation.getState()) {
+            case AWAITING_PRODUCTION_SITE -> botClient.sendMessage(chatId, productionSiteQuestion(), productionSiteKeyboard());
             case AWAITING_CUSTOMER, AWAITING_CUSTOMER_NAME -> botClient.sendMessage(chatId, conversationFlow.customerQuestion());
             case AWAITING_CUSTOMER_SELECTION -> {
                 List<ConversationCustomerCandidateEntity> options = customerResolution.currentOptions(conversation);
@@ -1109,6 +1165,12 @@ public class TelegramUpdateProcessor {
             case AWAITING_CONFIRMATION -> sendSummary(chatId, requireDraft(conversation));
             default -> botClient.sendMessage(chatId, helpText());
         }
+    }
+
+    private ZoneId zoneFor(TelegramIntakeDraftEntity draft) {
+        return draft == null || draft.getProductionSite() == null || draft.getProductionSite().getTimezone() == null
+                ? businessZone
+                : ZoneId.of(draft.getProductionSite().getTimezone());
     }
 
     private void sendSummary(Long chatId, TelegramIntakeDraftEntity draft) {

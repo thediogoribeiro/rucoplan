@@ -23,5 +23,12 @@ app:
       webhook-base-url: https://example.test
     whatsapp:
       token: test-whatsapp-token
+      enabled: true
+      access-token:
+      app-secret: test-whatsapp-app-secret
+      verify-token: test-whatsapp-verify-token
+      phone-number-id: test-phone-number-id
+      business-account-id: test-waba-id
+      graph-api-version: v26.0
   seed:
     enabled: false

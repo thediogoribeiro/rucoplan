@@ -3,8 +3,10 @@ package pt.rucodel.productionplanning.service;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.ConversationCustomerOptionType;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.ConversationCustomerCandidateEntity;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
+import pt.rucodel.productionplanning.entity.TelegramIntakeDraftEntity;
 import pt.rucodel.productionplanning.entity.TelegramConversationEntity;
 import pt.rucodel.productionplanning.repository.ConversationCustomerCandidateRepository;
 
@@ -44,13 +46,14 @@ public class CustomerResolutionService {
         }
 
         clearCandidates(conversation);
-        List<CustomerReferenceEntity> exact = searchService.exactNormalized(original);
+        ProductionSiteCode siteCode = siteCode(conversation);
+        List<CustomerReferenceEntity> exact = searchService.exactNormalized(siteCode, original);
         if (exact.size() == 1) {
             return CustomerResolutionResult.exact(exact.getFirst());
         }
 
         List<CustomerSearchResult> suggestions = exact.isEmpty()
-                ? searchService.suggest(original)
+                ? searchService.suggest(siteCode, original)
                 : exact.stream().map(customer -> new CustomerSearchResult(customer, 1.0, distinction(customer))).toList();
         persistOptions(conversation, original, normalized, suggestions, exact.isEmpty());
         return CustomerResolutionResult.options(original, normalized, suggestions, exact.isEmpty());
@@ -117,5 +120,13 @@ public class CustomerResolutionService {
         return customer.getExternalId() == null || customer.getExternalId().isBlank()
                 ? "sem número de cliente"
                 : "n.º " + customer.getExternalId();
+    }
+
+    private ProductionSiteCode siteCode(TelegramConversationEntity conversation) {
+        TelegramIntakeDraftEntity draft = conversation.getActiveDraft();
+        if (draft == null || draft.getProductionSite() == null || draft.getProductionSite().getCode() == null) {
+            return ProductionSiteCode.PT;
+        }
+        return draft.getProductionSite().getCode();
     }
 }

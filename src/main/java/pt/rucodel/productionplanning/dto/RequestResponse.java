@@ -1,8 +1,11 @@
 package pt.rucodel.productionplanning.dto;
 
 import pt.rucodel.productionplanning.domain.LifecycleStatus;
+import pt.rucodel.productionplanning.domain.ProductionPlanItemReconciliationStatus;
+import pt.rucodel.productionplanning.domain.ProductionPlanLineStatus;
 import pt.rucodel.productionplanning.domain.RequestSource;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -42,6 +45,20 @@ public record RequestResponse(
         boolean planningLocked,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        long version
+        long version,
+        LocalDate productionDate,
+        UUID productionPlanItemId,
+        Long productionLineVersion,
+        ProductionPlanLineStatus productionLineStatus,
+        List<PlanLineWheelQuantityResponse> productionWheelQuantities,
+        Integer productionPlannedQuantity,
+        Integer productionCompletedQuantity,
+        Integer productionRemainingQuantity,
+        OffsetDateTime productionClosedAt,
+        String productionClosedBy,
+        UUID reconciliationId,
+        ProductionPlanItemReconciliationStatus closureStatus,
+        boolean canReopenClosure,
+        String reopenBlockReason
 ) {
 }

@@ -60,6 +60,7 @@ public class DriverIntakeConversationService {
         return """
                 10/10 — Confirma o pedido?
 
+                Unidade de produção: %s
                 Cliente: %s
 
                 Tipos de jantes:
@@ -73,6 +74,7 @@ public class DriverIntakeConversationService {
                 Notas: %s
                 %s
                 """.formatted(
+                draft.getProductionSite() == null ? "Portugal" : draft.getProductionSite().getDisplayName(),
                 draft.getCustomerNameSnapshot(),
                 value(draft, WheelType.BIPARTITE),
                 value(draft, WheelType.WASHED),
@@ -95,19 +97,20 @@ public class DriverIntakeConversationService {
                 || draft.getFactoryPickupSlot() == null) {
             return "";
         }
-        OffsetDateTime available = draft.getFactoryDropoffSlot().endAt(draft.getFactoryDropoffDate(), businessZone, overnightEndTime);
-        OffsetDateTime requested = draft.getFactoryPickupSlot().startAt(draft.getReadyDate(), businessZone);
-        OffsetDateTime minimum = minimumBipartiteDeadline(available, requested);
+        ZoneId zone = zoneFor(draft);
+        OffsetDateTime available = draft.getFactoryDropoffSlot().endAt(draft.getFactoryDropoffDate(), zone, overnightEndTime);
+        OffsetDateTime requested = draft.getFactoryPickupSlot().startAt(draft.getReadyDate(), zone);
+        OffsetDateTime minimum = minimumBipartiteDeadline(available, requested, zone);
         if (!minimum.isAfter(requested)) {
             return "";
         }
         return "\nO prazo das jantes bipartidas foi ajustado para "
-                + formatter.format(minimum.atZoneSameInstant(businessZone).toLocalDate())
+                + formatter.format(minimum.atZoneSameInstant(zone).toLocalDate())
                 + ", devido ao prazo mínimo de 15 dias úteis.";
     }
 
-    private OffsetDateTime minimumBipartiteDeadline(OffsetDateTime available, OffsetDateTime requestedDeadline) {
-        LocalDate date = available.atZoneSameInstant(businessZone).toLocalDate();
+    private OffsetDateTime minimumBipartiteDeadline(OffsetDateTime available, OffsetDateTime requestedDeadline, ZoneId zone) {
+        LocalDate date = available.atZoneSameInstant(zone).toLocalDate();
         int remaining = BIPARTITE_MINIMUM_BUSINESS_DAYS;
         while (remaining > 0) {
             date = date.plusDays(1);
@@ -115,9 +118,15 @@ public class DriverIntakeConversationService {
                 remaining--;
             }
         }
-        return date.atTime(requestedDeadline.atZoneSameInstant(businessZone).toLocalTime())
-                .atZone(businessZone)
+        return date.atTime(requestedDeadline.atZoneSameInstant(zone).toLocalTime())
+                .atZone(zone)
                 .toOffsetDateTime();
+    }
+
+    private ZoneId zoneFor(TelegramIntakeDraftEntity draft) {
+        return draft.getProductionSite() == null || draft.getProductionSite().getTimezone() == null
+                ? businessZone
+                : ZoneId.of(draft.getProductionSite().getTimezone());
     }
 
     public String wheelBreakdown(java.util.Map<WheelType, Integer> quantities) {

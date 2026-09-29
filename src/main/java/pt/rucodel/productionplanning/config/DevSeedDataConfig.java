@@ -11,6 +11,7 @@ import pt.rucodel.productionplanning.domain.RequestSource;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 
 import java.time.*;
 import java.util.ArrayList;
@@ -27,25 +28,43 @@ public class DevSeedDataConfig {
                                           WheelIntakeRequestRepository requests,
                                           RequestStatusHistoryRepository history,
                                           DailyProductionSettingsRepository settings,
+                                          ProductionSiteRepository productionSites,
+                                          ProductionSiteService productionSiteService,
                                           PasswordEncoder passwordEncoder,
                                           Clock clock) {
         return args -> {
             ZoneId zone = ZoneId.of("Europe/Lisbon");
             LocalDate today = LocalDate.now(clock.withZone(zone));
+            ProductionSiteEntity portugal = productionSites.findByCode(pt.rucodel.productionplanning.domain.ProductionSiteCode.PT)
+                    .orElseThrow();
 
             DriverEntity d1 = findOrCreateDriver(drivers, "D001", "João Martins");
             DriverEntity d2 = findOrCreateDriver(drivers, "D002", "Marta Silva");
             DriverEntity d3 = findOrCreateDriver(drivers, "D003", "Rui Costa");
+            productionSiteService.ensureDriverAssociation(d1, portugal,
+                    pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource.MIGRATION, "DEV_SEED");
+            productionSiteService.ensureDriverAssociation(d2, portugal,
+                    pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource.MIGRATION, "DEV_SEED");
+            productionSiteService.ensureDriverAssociation(d3, portugal,
+                    pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource.MIGRATION, "DEV_SEED");
 
-            createUserIfMissing(users, admin("admin", "Administrador", "admin123", passwordEncoder));
-            createUserIfMissing(users, driverUser("driver1", d1, "driver123", passwordEncoder));
-            createUserIfMissing(users, driverUser("driver2", d2, "driver123", passwordEncoder));
-            createUserIfMissing(users, driverUser("driver3", d3, "driver123", passwordEncoder));
+            productionSiteService.ensureUserAssociation(
+                    createUserIfMissing(users, admin("admin", "Administrador", "admin123", passwordEncoder)),
+                    portugal, "DEV_SEED");
+            productionSiteService.ensureUserAssociation(
+                    createUserIfMissing(users, driverUser("driver1", d1, "driver123", passwordEncoder)),
+                    portugal, "DEV_SEED");
+            productionSiteService.ensureUserAssociation(
+                    createUserIfMissing(users, driverUser("driver2", d2, "driver123", passwordEncoder)),
+                    portugal, "DEV_SEED");
+            productionSiteService.ensureUserAssociation(
+                    createUserIfMissing(users, driverUser("driver3", d3, "driver123", passwordEncoder)),
+                    portugal, "DEV_SEED");
 
-            CustomerReferenceEntity c1 = findOrCreateCustomer(customers, "C1001", "Oficina Central Braga");
-            CustomerReferenceEntity c2 = findOrCreateCustomer(customers, "C1002", "Auto Reparadora Norte");
-            CustomerReferenceEntity c3 = findOrCreateCustomer(customers, "C1003", "Pneus Atlântico");
-            CustomerReferenceEntity c4 = findOrCreateCustomer(customers, "C1004", "Jantes e Companhia");
+            CustomerReferenceEntity c1 = findOrCreateCustomer(customers, portugal, "C1001", "Oficina Central Braga");
+            CustomerReferenceEntity c2 = findOrCreateCustomer(customers, portugal, "C1002", "Auto Reparadora Norte");
+            CustomerReferenceEntity c3 = findOrCreateCustomer(customers, portugal, "C1003", "Pneus Atlântico");
+            CustomerReferenceEntity c4 = findOrCreateCustomer(customers, portugal, "C1004", "Jantes e Companhia");
 
             createSettingsIfMissing(settings, today);
 
@@ -84,21 +103,24 @@ public class DevSeedDataConfig {
                 .orElseGet(() -> drivers.save(driver(externalId, name)));
     }
 
-    private CustomerReferenceEntity findOrCreateCustomer(CustomerReferenceRepository customers, String externalId, String name) {
+    private CustomerReferenceEntity findOrCreateCustomer(CustomerReferenceRepository customers, ProductionSiteEntity site,
+                                                        String externalId, String name) {
         String customerCode = codeFromExternalId("CLI-", externalId);
         Integer customerNumber = externalId != null && externalId.matches("C[0-9]+")
                 ? Integer.parseInt(externalId.substring(1))
                 : null;
-        return customers.findByExternalId(externalId)
-                .or(() -> customerNumber == null ? java.util.Optional.empty() : customers.findByCustomerNumber(customerNumber))
-                .or(() -> customerCode == null ? java.util.Optional.empty() : customers.findByCustomerCode(customerCode))
-                .orElseGet(() -> customers.save(customer(externalId, name)));
+        return customers.findByProductionSite_CodeAndExternalId(site.getCode(), externalId)
+                .or(() -> customerNumber == null
+                        ? java.util.Optional.empty()
+                        : customers.findByProductionSite_CodeAndCustomerNumber(site.getCode(), customerNumber))
+                .or(() -> customerCode == null
+                        ? java.util.Optional.empty()
+                        : customers.findByProductionSite_CodeAndCustomerCode(site.getCode(), customerCode))
+                .orElseGet(() -> customers.save(customer(site, externalId, name)));
     }
 
-    private void createUserIfMissing(ApplicationUserRepository users, ApplicationUserEntity user) {
-        if (!users.existsByUsername(user.getUsername())) {
-            users.save(user);
-        }
+    private ApplicationUserEntity createUserIfMissing(ApplicationUserRepository users, ApplicationUserEntity user) {
+        return users.findByUsername(user.getUsername()).orElseGet(() -> users.save(user));
     }
 
     private void createSettingsIfMissing(DailyProductionSettingsRepository settings, LocalDate today) {
@@ -161,8 +183,9 @@ public class DevSeedDataConfig {
         return user;
     }
 
-    private CustomerReferenceEntity customer(String externalId, String name) {
+    private CustomerReferenceEntity customer(ProductionSiteEntity site, String externalId, String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(site);
         entity.setExternalId(externalId);
         if (externalId != null && externalId.matches("C[0-9]+")) {
             entity.setCustomerNumber(Integer.parseInt(externalId.substring(1)));
@@ -192,6 +215,7 @@ public class DevSeedDataConfig {
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
         entity.setRequestCode(requestCode);
         entity.setSource(RequestSource.WEB);
+        entity.setProductionSite(customer.getProductionSite());
         entity.setDriver(driver);
         entity.setCustomer(customer);
         entity.setCustomerExternalId(customer.getExternalId());

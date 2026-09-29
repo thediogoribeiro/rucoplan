@@ -7,7 +7,9 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.dto.AuthUserResponse;
 import pt.rucodel.productionplanning.dto.LoginRequest;
 import pt.rucodel.productionplanning.dto.LoginResponse;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 import pt.rucodel.productionplanning.security.TokenService;
@@ -17,11 +19,14 @@ public class AuthService {
     private final ApplicationUserRepository users;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokenService;
+    private final ProductionSiteService productionSites;
 
-    public AuthService(ApplicationUserRepository users, PasswordEncoder passwordEncoder, TokenService tokenService) {
+    public AuthService(ApplicationUserRepository users, PasswordEncoder passwordEncoder, TokenService tokenService,
+                       ProductionSiteService productionSites) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.tokenService = tokenService;
+        this.productionSites = productionSites;
     }
 
     @Transactional(readOnly = true)
@@ -32,21 +37,29 @@ public class AuthService {
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BadCredentialsException("Invalid credentials");
         }
-        TokenService.IssuedToken issued = tokenService.issue(user);
-        return new LoginResponse(issued.token(), issued.expiresAt(), toResponse(user));
+        ProductionSiteCode siteCode = ProductionSiteCode.parse(request.productionSite());
+        if (siteCode == null) {
+            throw new BadCredentialsException("Invalid credentials");
+        }
+        ProductionSiteEntity site = productionSites.requireUserSite(user, siteCode);
+        TokenService.IssuedToken issued = tokenService.issue(user, site);
+        return new LoginResponse(issued.token(), issued.expiresAt(), toResponse(user, site));
     }
 
     public AuthUserResponse me(AuthenticatedUser user) {
-        return new AuthUserResponse(user.id(), user.username(), user.displayName(), user.role(), user.driverId());
+        ProductionSiteEntity site = productionSites.requireById(user.productionSiteId());
+        return new AuthUserResponse(user.id(), user.username(), user.displayName(), user.role(), user.driverId(),
+                productionSites.toResponse(site));
     }
 
-    private AuthUserResponse toResponse(ApplicationUserEntity user) {
+    private AuthUserResponse toResponse(ApplicationUserEntity user, ProductionSiteEntity site) {
         return new AuthUserResponse(
                 user.getId(),
                 user.getUsername(),
                 user.getDisplayName(),
                 user.getRole(),
-                user.getDriver() == null ? null : user.getDriver().getId()
+                user.getDriver() == null ? null : user.getDriver().getId(),
+                productionSites.toResponse(site)
         );
     }
 }

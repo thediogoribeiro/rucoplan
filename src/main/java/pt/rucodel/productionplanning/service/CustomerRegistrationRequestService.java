@@ -26,6 +26,7 @@ public class CustomerRegistrationRequestService {
     private final AuditService auditService;
     private final Clock clock;
     private final PublicCodeService publicCodes;
+    private final ProductionSiteService productionSites;
 
     public CustomerRegistrationRequestService(CustomerRegistrationRequestRepository registrations,
                                               CustomerReferenceRepository customers,
@@ -33,7 +34,8 @@ public class CustomerRegistrationRequestService {
                                               CustomerNameNormalizer normalizer,
                                               AuditService auditService,
                                               Clock clock,
-                                              PublicCodeService publicCodes) {
+                                              PublicCodeService publicCodes,
+                                              ProductionSiteService productionSites) {
         this.registrations = registrations;
         this.customers = customers;
         this.requests = requests;
@@ -41,6 +43,7 @@ public class CustomerRegistrationRequestService {
         this.auditService = auditService;
         this.clock = clock;
         this.publicCodes = publicCodes;
+        this.productionSites = productionSites;
     }
 
     @Transactional
@@ -52,8 +55,9 @@ public class CustomerRegistrationRequestService {
         if (normalized.isBlank()) {
             throw new InvalidRequestException("Customer name cannot be empty.");
         }
+        ProductionSiteEntity site = siteFromConversation(conversation);
         CustomerRegistrationRequestEntity existing = registrations
-                .findByNormalizedNameAndStatus(normalized, CustomerRegistrationStatus.PENDING_REVIEW)
+                .findByProductionSite_CodeAndNormalizedNameAndStatus(site.getCode(), normalized, CustomerRegistrationStatus.PENDING_REVIEW)
                 .stream()
                 .filter(request -> request.getRequestedByDriver().getId().equals(driver.getId()))
                 .findFirst()
@@ -62,6 +66,7 @@ public class CustomerRegistrationRequestService {
             return existing;
         }
         CustomerRegistrationRequestEntity request = new CustomerRegistrationRequestEntity();
+        request.setProductionSite(site);
         request.setProposedName(displayName);
         request.setNormalizedName(normalized);
         request.setRequestedByDriver(driver);
@@ -71,7 +76,7 @@ public class CustomerRegistrationRequestService {
         request.setCreatedBy("TELEGRAM");
         request.setUpdatedBy("TELEGRAM");
         CustomerRegistrationRequestEntity saved = registrations.saveAndFlush(request);
-        auditService.record(null, null, "CUSTOMER_REGISTRATION_REQUESTED", "TELEGRAM",
+        auditService.record(saved.getProductionSite(), null, null, "CUSTOMER_REGISTRATION_REQUESTED", "TELEGRAM",
                 "Registo provisório de cliente criado: " + mask(displayName));
         return saved;
     }
@@ -88,6 +93,7 @@ public class CustomerRegistrationRequestService {
         CustomerRegistrationRequestEntity request = registrations
                 .findFirstByConversationIdAndStatusOrderByCreatedAtDesc(conversation.getId(), CustomerRegistrationStatus.PENDING_REVIEW)
                 .orElseGet(CustomerRegistrationRequestEntity::new);
+        request.setProductionSite(siteFromConversation(conversation));
         request.setProposedName(displayName);
         request.setNormalizedName(normalized);
         request.setRequestedByDriver(driver);
@@ -155,13 +161,15 @@ public class CustomerRegistrationRequestService {
         if (registration.getReservedCustomerNumber() == null) {
             reserveNumber(registration);
         }
-        List<CustomerReferenceEntity> exactNameMatches = customers.findByActiveTrueAndNormalizedNameOrderByNameAscIdAsc(
-                registration.getNormalizedName());
+        List<CustomerReferenceEntity> exactNameMatches = customers.findActiveByNormalizedNameForSite(
+                registration.getProductionSite().getCode(), registration.getNormalizedName());
         if (!exactNameMatches.isEmpty()) {
             throw new InvalidRequestException("Entretanto foi encontrado um cliente com este nome. Confirme antes de continuar.");
         }
-        List<CustomerReferenceEntity> taxMatches = customers.findByActiveTrueAndTaxIdentifierAndCountryCodeOrderByNameAscIdAsc(
-                normalizeTaxIdentifier(registration.getTaxIdentifier()), normalizeCountryCode(registration.getCountryCode()));
+        List<CustomerReferenceEntity> taxMatches = customers.findActiveByTaxIdentifierForSite(
+                registration.getProductionSite().getCode(),
+                normalizeTaxIdentifier(registration.getTaxIdentifier()),
+                normalizeCountryCode(registration.getCountryCode()));
         if (!taxMatches.isEmpty()) {
             throw new InvalidRequestException("Entretanto foi encontrado um cliente com este NIF/VAT e país. Confirme antes de continuar.");
         }
@@ -175,6 +183,7 @@ public class CustomerRegistrationRequestService {
             return existingNumber;
         }
         CustomerReferenceEntity customer = new CustomerReferenceEntity();
+        customer.setProductionSite(registration.getProductionSite());
         customer.setCustomerCode(publicCodes.customerCode(customers.nextCustomerCodeNumber()));
         customer.setCustomerNumber(registration.getReservedCustomerNumber());
         customer.setName(registration.getProposedName());
@@ -192,7 +201,7 @@ public class CustomerRegistrationRequestService {
         registration.setReviewedAt(OffsetDateTime.now(clock));
         registration.setReviewedBy("TELEGRAM");
         registration.setUpdatedBy("TELEGRAM");
-        auditService.record(null, null, "CUSTOMER_CREATED", "TELEGRAM",
+        auditService.record(saved.getProductionSite(), null, null, "CUSTOMER_CREATED", "TELEGRAM",
                 "Cliente criado pelo bot Telegram com número " + saved.getCustomerNumber() + ".");
         return saved;
     }
@@ -227,6 +236,11 @@ public class CustomerRegistrationRequestService {
         }
         CustomerReferenceEntity customer = customers.findById(customerId).filter(CustomerReferenceEntity::isActive)
                 .orElseThrow(() -> new EntityNotFoundException("Customer was not found."));
+        if (registration.getProductionSite() != null
+                && (customer.getProductionSite() == null
+                || !customer.getProductionSite().getId().equals(registration.getProductionSite().getId()))) {
+            throw new EntityNotFoundException("Customer was not found.");
+        }
         registration.setMatchedCustomer(customer);
         registration.setStatus(CustomerRegistrationStatus.LINKED_TO_EXISTING);
         registration.setReviewedAt(OffsetDateTime.now(clock));
@@ -325,5 +339,14 @@ public class CustomerRegistrationRequestService {
         if (!normalizedTax.matches("[A-Z0-9]{2,30}")) {
             throw new InvalidRequestException("O NIF/VAT deve conter apenas letras e números.");
         }
+    }
+
+    private ProductionSiteEntity siteFromConversation(TelegramConversationEntity conversation) {
+        if (conversation != null
+                && conversation.getActiveDraft() != null
+                && conversation.getActiveDraft().getProductionSite() != null) {
+            return conversation.getActiveDraft().getProductionSite();
+        }
+        return productionSites.portugal();
     }
 }

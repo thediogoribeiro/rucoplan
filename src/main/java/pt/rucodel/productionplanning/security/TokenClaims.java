@@ -11,6 +11,10 @@ public record TokenClaims(
         String displayName,
         UserRole role,
         UUID driverId,
+        UUID productionSiteId,
+        pt.rucodel.productionplanning.domain.ProductionSiteCode productionSiteCode,
+        String productionSiteName,
+        String productionSiteTimezone,
         OffsetDateTime expiresAt
 ) {
 }

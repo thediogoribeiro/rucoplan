@@ -8,6 +8,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import pt.rucodel.productionplanning.domain.DashboardPlanUpdatedEvent;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.dto.SystemDiagnosticsResponse;
 
 import java.io.IOException;
@@ -23,7 +24,7 @@ public class DashboardSseService {
     static final long HEARTBEAT_INTERVAL_MILLIS = 30_000L;
     private static final long TIMEOUT_MILLIS = 0L;
 
-    private final CopyOnWriteArrayList<SseEmitter> emitters = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<SseClient> emitters = new CopyOnWriteArrayList<>();
     private volatile OffsetDateTime lastClientConnectedAt;
     private volatile OffsetDateTime lastEventAt;
     private volatile OffsetDateTime lastFailureAt;
@@ -32,8 +33,12 @@ public class DashboardSseService {
     private volatile String lastCorrelationId;
 
     public SseEmitter subscribe() {
+        return subscribe(ProductionSiteCode.PT);
+    }
+
+    public SseEmitter subscribe(ProductionSiteCode siteCode) {
         SseEmitter emitter = createEmitter();
-        registerEmitter(emitter);
+        registerEmitter(emitter, siteCode);
         sendConnectedEvent(emitter);
         return emitter;
     }
@@ -44,10 +49,11 @@ public class DashboardSseService {
     }
 
     public void sendPlanUpdate(DashboardPlanUpdatedEvent update) {
-        sendToAll(SseEmitter.event()
+        sendToSite(update.productionSite(), SseEmitter.event()
                 .name("production-plan-updated")
                 .data(Map.of(
                         "type", "PRODUCTION_PLAN_UPDATED",
+                        "productionSite", update.productionSite().name(),
                         "date", update.planningDate().toString()
                 )), "dashboard update");
     }
@@ -89,12 +95,17 @@ public class DashboardSseService {
     }
 
     void registerEmitter(SseEmitter emitter) {
-        emitters.add(emitter);
+        registerEmitter(emitter, ProductionSiteCode.PT);
+    }
+
+    void registerEmitter(SseEmitter emitter, ProductionSiteCode siteCode) {
+        SseClient client = new SseClient(emitter, siteCode);
+        emitters.add(client);
         lastClientConnectedAt = OffsetDateTime.now(ZoneOffset.UTC);
-        LOGGER.info("Production planning SSE client connected activeClients={}", emitters.size());
-        emitter.onCompletion(() -> removeEmitter(emitter, "completion"));
-        emitter.onTimeout(() -> removeEmitter(emitter, "timeout"));
-        emitter.onError(error -> removeEmitter(emitter, "error"));
+        LOGGER.info("Production planning SSE client connected site={} activeClients={}", siteCode, emitters.size());
+        emitter.onCompletion(() -> removeEmitter(client, "completion"));
+        emitter.onTimeout(() -> removeEmitter(client, "timeout"));
+        emitter.onError(error -> removeEmitter(client, "error"));
     }
 
     private void sendConnectedEvent(SseEmitter emitter) {
@@ -116,33 +127,65 @@ public class DashboardSseService {
         if ("heartbeat".equals(eventDescription)) {
             lastHeartbeatAt = OffsetDateTime.now(ZoneOffset.UTC);
         }
-        for (SseEmitter emitter : emitters) {
+        for (SseClient client : emitters) {
             try {
-                emitter.send(event);
+                client.emitter().send(event);
                 if (!"heartbeat".equals(eventDescription)) {
                     lastEventAt = OffsetDateTime.now(ZoneOffset.UTC);
                 }
             } catch (IOException | IllegalStateException exception) {
-                removeEmitter(emitter, "failed " + eventDescription + " send", exception);
+                removeEmitter(client, "failed " + eventDescription + " send", exception);
+                LOGGER.debug("Removing SSE client after failed {} send", eventDescription, exception);
+            }
+        }
+    }
+
+    private void sendToSite(ProductionSiteCode siteCode, SseEmitter.SseEventBuilder event, String eventDescription) {
+        for (SseClient client : emitters) {
+            if (client.siteCode() != siteCode) {
+                continue;
+            }
+            try {
+                client.emitter().send(event);
+                lastEventAt = OffsetDateTime.now(ZoneOffset.UTC);
+            } catch (IOException | IllegalStateException exception) {
+                removeEmitter(client, "failed " + eventDescription + " send", exception);
                 LOGGER.debug("Removing SSE client after failed {} send", eventDescription, exception);
             }
         }
     }
 
     private void removeEmitter(SseEmitter emitter, String reason) {
-        removeEmitter(emitter, reason, null);
+        emitters.stream()
+                .filter(client -> client.emitter() == emitter)
+                .findFirst()
+                .ifPresent(client -> removeEmitter(client, reason, null));
     }
 
     private void removeEmitter(SseEmitter emitter, String reason, Throwable error) {
-        if (emitters.remove(emitter)) {
+        emitters.stream()
+                .filter(client -> client.emitter() == emitter)
+                .findFirst()
+                .ifPresent(client -> removeEmitter(client, reason, error));
+    }
+
+    private void removeEmitter(SseClient client, String reason) {
+        removeEmitter(client, reason, null);
+    }
+
+    private void removeEmitter(SseClient client, String reason, Throwable error) {
+        if (emitters.remove(client)) {
             if (error != null || reason.contains("error") || reason.contains("failed")) {
                 lastFailureAt = OffsetDateTime.now(ZoneOffset.UTC);
                 lastErrorCode = "REALTIME_CONNECTION_FAILED";
                 lastCorrelationId = UUID.randomUUID().toString();
-                LOGGER.warn("Production planning SSE client failed reason={} correlationId={} activeClients={}",
-                        reason, lastCorrelationId, emitters.size());
+                LOGGER.warn("Production planning SSE client failed site={} reason={} correlationId={} activeClients={}",
+                        client.siteCode(), reason, lastCorrelationId, emitters.size());
             }
-            LOGGER.info("Production planning SSE client disconnected reason={} activeClients={}", reason, emitters.size());
+            LOGGER.info("Production planning SSE client disconnected site={} reason={} activeClients={}", client.siteCode(), reason, emitters.size());
         }
+    }
+
+    private record SseClient(SseEmitter emitter, ProductionSiteCode siteCode) {
     }
 }

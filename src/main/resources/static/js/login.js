@@ -10,7 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
     pp.hideMessage(message);
     const payload = {
       username: form.username.value.trim(),
-      password: form.password.value
+      password: form.password.value,
+      productionSite: form.productionSite.value
     };
     try {
       const response = await api.postJson('/api/v1/auth/login', payload, { auth: false });

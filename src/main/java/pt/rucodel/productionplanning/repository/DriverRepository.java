@@ -2,6 +2,8 @@ package pt.rucodel.productionplanning.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.DriverEntity;
 
 import java.util.List;
@@ -19,4 +21,17 @@ public interface DriverRepository extends JpaRepository<DriverEntity, UUID> {
     Integer nextDriverCodeNumber();
 
     List<DriverEntity> findByActiveTrueOrderByName();
+
+    @Query("""
+            select d from DriverEntity d
+            where d.active = true
+              and exists (
+                select 1 from DriverProductionSiteEntity ds
+                where ds.driver = d
+                  and ds.active = true
+                  and ds.productionSite.code = :siteCode
+              )
+            order by d.name
+            """)
+    List<DriverEntity> findActiveForSite(@Param("siteCode") ProductionSiteCode siteCode);
 }

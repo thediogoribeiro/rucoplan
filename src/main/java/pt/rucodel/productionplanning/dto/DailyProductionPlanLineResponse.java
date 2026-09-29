@@ -35,6 +35,8 @@ public record DailyProductionPlanLineResponse(
         String operationalNotes,
         boolean carriedOver,
         boolean advancedFromFuture,
+        java.time.OffsetDateTime closedAt,
+        String closedBy,
         String priorityExplanation,
         RiskClassification riskClassification,
         ProductionPlanLineStatus status,

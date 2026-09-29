@@ -2,5 +2,5 @@ package pt.rucodel.productionplanning.domain;
 
 import java.time.LocalDate;
 
-public record DashboardPlanUpdatedEvent(LocalDate planningDate) {
+public record DashboardPlanUpdatedEvent(ProductionSiteCode productionSite, LocalDate planningDate) {
 }

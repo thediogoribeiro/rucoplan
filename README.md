@@ -140,6 +140,9 @@ PostgreSQL migration tests require a working Docker/Testcontainers environment.
 Additional integration notes are available in:
 
 - [`docs/INTEGRATION_CONTRACTS.md`](docs/INTEGRATION_CONTRACTS.md)
+- [`docs/production-sites.md`](docs/production-sites.md)
+- [`docs/integrations/whatsapp.md`](docs/integrations/whatsapp.md)
+- [`docs/manual-order-entry.md`](docs/manual-order-entry.md)
 
 ## Security Notes
 

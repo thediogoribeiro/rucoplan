@@ -12,6 +12,8 @@ import pt.rucodel.productionplanning.repository.*;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 import pt.rucodel.productionplanning.service.MultiDayProductionPlanningService;
 import pt.rucodel.productionplanning.service.ProductionTargetService;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
+import pt.rucodel.productionplanning.service.WheelIntakeRequestService;
 
 import java.time.*;
 import java.util.List;
@@ -25,11 +27,13 @@ import static org.assertj.core.api.Assertions.*;
 class MultiDayPlanningIntegrationTest {
     @jakarta.annotation.Resource MultiDayProductionPlanningService planning;
     @jakarta.annotation.Resource ProductionTargetService targets;
+    @jakarta.annotation.Resource WheelIntakeRequestService intakeRequests;
     @jakarta.annotation.Resource DriverRepository drivers;
     @jakarta.annotation.Resource CustomerReferenceRepository customers;
     @jakarta.annotation.Resource WheelIntakeRequestRepository requests;
     @jakarta.annotation.Resource ProductionPlanRepository plans;
     @jakarta.annotation.Resource ProductionPlanItemRepository planItems;
+    @jakarta.annotation.Resource ProductionPlanItemReconciliationRepository planItemReconciliations;
     @jakarta.annotation.Resource CapacityAlertRepository capacityAlerts;
     @jakarta.annotation.Resource ProductionTargetConfigurationRepository targetConfigurations;
     @jakarta.annotation.Resource PlanningRunRepository planningRuns;
@@ -41,6 +45,9 @@ class MultiDayPlanningIntegrationTest {
     @jakarta.annotation.Resource TelegramInboundUpdateRepository inboundUpdates;
     @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
     @jakarta.annotation.Resource ApplicationUserRepository users;
+    @jakarta.annotation.Resource ApplicationUserSiteRepository userSites;
+    @jakarta.annotation.Resource DriverProductionSiteRepository driverSites;
+    @jakarta.annotation.Resource ProductionSiteService productionSites;
 
     private final ZoneId zone = ZoneId.of("Europe/Lisbon");
     private final LocalDate day = LocalDate.of(2099, 9, 10);
@@ -48,6 +55,7 @@ class MultiDayPlanningIntegrationTest {
     private CustomerReferenceEntity customerX;
     private CustomerReferenceEntity customerY;
     private CustomerReferenceEntity customerZ;
+    private ProductionSiteEntity portugal;
     private AuthenticatedUser admin;
 
     @BeforeEach
@@ -56,6 +64,7 @@ class MultiDayPlanningIntegrationTest {
         conversations.deleteAll();
         drafts.deleteAll();
         capacityAlerts.deleteAll();
+        planItemReconciliations.deleteAll();
         planItems.deleteAll();
         plans.deleteAll();
         planningRuns.deleteAll();
@@ -65,11 +74,16 @@ class MultiDayPlanningIntegrationTest {
         requests.deleteAll();
         settings.deleteAll();
         targetConfigurations.deleteAll();
+        userSites.deleteAll();
         users.deleteAll();
         customers.deleteAll();
+        driverSites.deleteAll();
         drivers.deleteAll();
 
+        portugal = productionSites.requireByCode(ProductionSiteCode.PT);
         driver = drivers.save(driver("Motorista"));
+        productionSites.ensureDriverAssociation(driver, portugal,
+                DriverProductionSiteAssociationSource.ADMIN, "TEST");
         customerX = customers.save(customer("Cliente X"));
         customerY = customers.save(customer("Cliente Y"));
         customerZ = customers.save(customer("Cliente Z"));
@@ -409,6 +423,184 @@ class MultiDayPlanningIntegrationTest {
     }
 
     @Test
+    void planItemsCanBeClosedIndividuallyWithoutClosingTheWholeDay() {
+        createTargets(0, 300, day);
+        WheelIntakeRequestEntity x = request(customerX, 10, day, day, RequestSource.WEB);
+        WheelIntakeRequestEntity y = request(customerY, 10, day, day, RequestSource.WEB);
+        DailyProductionPlanResponse created = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+
+        DailyProductionPlanLineResponse first = created.lines().stream()
+                .filter(line -> line.requestId().equals(x.getId()))
+                .findFirst()
+                .orElseThrow();
+        DailyProductionPlanResponse afterClose = planning.closeItem(day, first.id(),
+                closeItemPayload(first, Map.of(WheelType.NORMAL, 10)), admin);
+
+        assertThat(afterClose.status()).isEqualTo(ProductionPlanStatus.AWAITING_RECONCILIATION);
+        assertThat(afterClose.lines()).filteredOn(line -> line.requestId().equals(x.getId()))
+                .singleElement()
+                .satisfies(line -> {
+                    assertThat(line.status()).isEqualTo(ProductionPlanLineStatus.CLOSED_COMPLETE);
+                    assertThat(line.completedQuantity()).isEqualTo(10);
+                    assertThat(line.remainingQuantity()).isZero();
+                });
+        assertThat(afterClose.lines()).filteredOn(line -> line.requestId().equals(y.getId()))
+                .singleElement()
+                .extracting(DailyProductionPlanLineResponse::status)
+                .isEqualTo(ProductionPlanLineStatus.OPEN);
+        assertThat(planning.openReconciliation(day).lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .containsExactly(y.getId());
+        assertThat(planning.closedReconciliation(day).lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .containsExactly(x.getId());
+        PageResponse<RequestResponse> productionRequests = planning.requestsForProductionDate(day, 0, 10);
+        assertThat(productionRequests.content()).extracting(RequestResponse::id)
+                .containsExactly(x.getId(), y.getId());
+        assertThat(productionRequests.content()).allSatisfy(request -> {
+            assertThat(request.productionDate()).isEqualTo(day);
+            assertThat(request.productionPlanItemId()).isNotNull();
+            assertThat(request.productionLineVersion()).isNotNull();
+            assertThat(request.productionPlannedQuantity()).isEqualTo(10);
+        });
+        assertThat(productionRequests.content()).filteredOn(RequestResponse::canReopenClosure)
+                .singleElement()
+                .satisfies(request -> {
+                    assertThat(request.id()).isEqualTo(x.getId());
+                    assertThat(request.reconciliationId()).isNotNull();
+                    assertThat(request.closureStatus()).isEqualTo(ProductionPlanItemReconciliationStatus.CLOSED_COMPLETE);
+                    assertThat(request.reopenBlockReason()).isNull();
+                });
+        PageResponse<RequestResponse> allRequests = intakeRequests.listForAdmin(null, null, null, 0, 10);
+        assertThat(allRequests.content()).filteredOn(RequestResponse::canReopenClosure)
+                .singleElement()
+                .satisfies(request -> {
+                    assertThat(request.id()).isEqualTo(x.getId());
+                    assertThat(request.lifecycleStatus()).isEqualTo(LifecycleStatus.READY_FOR_PICKUP);
+                    assertThat(request.productionDate()).isEqualTo(day);
+                    assertThat(request.productionPlanItemId()).isEqualTo(first.id());
+                    assertThat(request.reconciliationId()).isNotNull();
+                });
+        assertThat(requests.findById(x.getId()).orElseThrow().getCompletedWheelQuantity()).isEqualTo(10);
+        assertThat(requests.findById(y.getId()).orElseThrow().getCompletedWheelQuantity()).isZero();
+    }
+
+    @Test
+    void readyRequestWithoutReversibleClosureExplainsWhyReopenIsUnavailable() {
+        WheelIntakeRequestEntity legacy = request(customerX, 10, day, day, RequestSource.WEB);
+        legacy.setLifecycleStatus(LifecycleStatus.READY_FOR_PICKUP);
+        requests.saveAndFlush(legacy);
+
+        PageResponse<RequestResponse> allRequests = intakeRequests.listForAdmin(null, null, null, 0, 10);
+
+        assertThat(allRequests.content()).singleElement().satisfies(request -> {
+            assertThat(request.id()).isEqualTo(legacy.getId());
+            assertThat(request.canReopenClosure()).isFalse();
+            assertThat(request.reconciliationId()).isNull();
+            assertThat(request.reopenBlockReason()).contains("histórico de fecho");
+        });
+    }
+
+    @Test
+    void planItemClosureRequiresAtLeastOneCompletedWheel() {
+        createTargets(0, 300, day);
+        WheelIntakeRequestEntity request = request(customerX, 10, day, day.plusDays(1), RequestSource.WEB);
+        DailyProductionPlanResponse created = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+        DailyProductionPlanLineResponse line = created.lines().getFirst();
+
+        assertThatThrownBy(() -> planning.closeItem(day, line.id(), closeItemPayload(line, Map.of()), admin))
+                .isInstanceOfSatisfying(InvalidRequestException.class, ex ->
+                        assertThat(ex.errorCode()).isEqualTo("PLAN_ITEM_NO_COMPLETED_QUANTITY"))
+                .hasMessageContaining("pelo menos uma jante concluída");
+
+        assertThat(planItems.findById(line.id())).get().satisfies(openLine -> {
+            assertThat(openLine.getLineStatus()).isEqualTo(ProductionPlanLineStatus.OPEN);
+            assertThat(openLine.getCompletedQuantity()).isZero();
+            assertThat(openLine.getRemainingQuantity()).isEqualTo(10);
+        });
+        assertThat(requests.findById(request.getId()).orElseThrow()).satisfies(updated -> {
+            assertThat(updated.getCompletedWheelQuantity()).isZero();
+            assertThat(updated.getLifecycleStatus()).isEqualTo(LifecycleStatus.AT_FACTORY);
+        });
+        assertThat(planItemReconciliations.findByProductionPlanItemIdOrderByRevisionDesc(line.id())).isEmpty();
+    }
+
+    @Test
+    void partialPlanItemClosureCreatesCarryOverAndReopenRestoresTheOriginalLine() {
+        createTargets(0, 300, day);
+        WheelIntakeRequestEntity request = request(customerX, 10, day, day.plusDays(1), RequestSource.WEB);
+        DailyProductionPlanResponse created = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+        DailyProductionPlanLineResponse line = created.lines().getFirst();
+
+        DailyProductionPlanResponse partial = planning.closeItem(day, line.id(),
+                closeItemPayload(line, Map.of(WheelType.NORMAL, 9)), admin);
+
+        assertThat(partial.lines()).singleElement().satisfies(closed -> {
+            assertThat(closed.status()).isEqualTo(ProductionPlanLineStatus.CLOSED_PARTIAL);
+            assertThat(closed.completedQuantity()).isEqualTo(9);
+            assertThat(closed.remainingQuantity()).isEqualTo(1);
+        });
+        assertThat(requests.findById(request.getId()).orElseThrow().getCompletedWheelQuantity()).isEqualTo(9);
+        assertThat(requests.findById(request.getId()).orElseThrow().getLifecycleStatus()).isEqualTo(LifecycleStatus.IN_PRODUCTION);
+        assertThat(plan(day.plusDays(1)).lines()).singleElement().satisfies(carried -> {
+            assertThat(carried.carriedOver()).isTrue();
+            assertThat(carried.requestId()).isEqualTo(request.getId());
+            assertThat(carried.plannedQuantity()).isEqualTo(1);
+        });
+        assertThat(planning.requestsForProductionDate(day, 0, 10).content())
+                .singleElement()
+                .satisfies(productionRequest -> {
+                    assertThat(productionRequest.canReopenClosure()).isTrue();
+                    assertThat(productionRequest.closureStatus()).isEqualTo(ProductionPlanItemReconciliationStatus.CLOSED_PARTIAL);
+                    assertThat(productionRequest.reconciliationId()).isNotNull();
+                });
+
+        DailyProductionPlanLineResponse closedLine = partial.lines().getFirst();
+        DailyProductionPlanResponse reopened = planning.reopenItem(day, line.id(),
+                new PlanItemReopenRequest(closedLine.version(), "Quantidade registada incorretamente"), admin);
+
+        assertThat(reopened.lines()).singleElement().satisfies(open -> {
+            assertThat(open.status()).isEqualTo(ProductionPlanLineStatus.REOPENED);
+            assertThat(open.completedQuantity()).isZero();
+            assertThat(open.remainingQuantity()).isEqualTo(10);
+        });
+        assertThat(planning.openReconciliation(day).lines()).extracting(DailyProductionPlanLineResponse::id)
+                .contains(line.id());
+        assertThat(requests.findById(request.getId()).orElseThrow().getCompletedWheelQuantity()).isZero();
+        assertThat(requests.findById(request.getId()).orElseThrow().getLifecycleStatus()).isEqualTo(LifecycleStatus.AT_FACTORY);
+        assertThat(planItemReconciliations.findByProductionPlanItemIdOrderByRevisionDesc(line.id()))
+                .singleElement()
+                .satisfies(reconciliation -> {
+                    assertThat(reconciliation.isReverted()).isTrue();
+                    assertThat(reconciliation.getReopenReason()).isEqualTo("Quantidade registada incorretamente");
+                });
+    }
+
+    @Test
+    void planItemReopenIsBlockedWhenLaterCarryOverWasAlreadyClosed() {
+        createTargets(0, 300, day);
+        request(customerX, 10, day, day.plusDays(1), RequestSource.WEB);
+        DailyProductionPlanResponse created = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+        DailyProductionPlanLineResponse original = created.lines().getFirst();
+        DailyProductionPlanResponse partial = planning.closeItem(day, original.id(),
+                closeItemPayload(original, Map.of(WheelType.NORMAL, 9)), admin);
+        DailyProductionPlanLineResponse later = plan(day.plusDays(1)).lines().getFirst();
+        planning.closeItem(day.plusDays(1), later.id(),
+                closeItemPayload(later, Map.of(WheelType.NORMAL, 1)), admin);
+
+        assertThat(planning.requestsForProductionDate(day, 0, 10).content())
+                .singleElement()
+                .satisfies(productionRequest -> {
+                    assertThat(productionRequest.canReopenClosure()).isFalse();
+                    assertThat(productionRequest.reopenBlockReason()).contains("fechos posteriores");
+                });
+
+        DailyProductionPlanLineResponse closedOriginal = partial.lines().getFirst();
+        assertThatThrownBy(() -> planning.reopenItem(day, original.id(),
+                new PlanItemReopenRequest(closedOriginal.version(), "Correção tardia"), admin))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("posterior");
+    }
+
+    @Test
     void planningClosureAndCarryOverKeepWheelTypeDetailsAndTargetsUseAggregateTotal() {
         createTargets(20, 22, day);
         WheelIntakeRequestEntity request = typedRequest(customerX, Map.of(
@@ -505,6 +697,13 @@ class MultiDayPlanningIntegrationTest {
         return new ReconciliationRequest(plan.version(), null, lines);
     }
 
+    private PlanItemCloseRequest closeItemPayload(DailyProductionPlanLineResponse line, Map<WheelType, Integer> completed) {
+        return new PlanItemCloseRequest(line.version(), line.wheelQuantities().stream()
+                .map(quantity -> new PlanItemCloseWheelQuantityRequest(quantity.type(),
+                        completed.getOrDefault(quantity.type(), 0)))
+                .toList(), null);
+    }
+
     private DailyProductionPlanResponse plan(LocalDate date) {
         return planning.getOrGenerate(date);
     }
@@ -527,6 +726,7 @@ class MultiDayPlanningIntegrationTest {
                                                   LocalDate availableDate, String availableStart, String availableEnd,
                                                   LocalDate dueDate, String dueStart, String dueEnd, RequestSource source) {
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
+        entity.setProductionSite(portugal);
         entity.setSource(source);
         entity.setDriver(driver);
         entity.setCustomer(customer);
@@ -561,6 +761,7 @@ class MultiDayPlanningIntegrationTest {
 
     private CustomerReferenceEntity customer(String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(portugal);
         entity.setName(name);
         entity.setActive(true);
         entity.setCreatedBy("TEST");

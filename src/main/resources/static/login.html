@@ -24,6 +24,17 @@
         <label>Palavra-passe
           <input id="password" name="password" type="password" autocomplete="current-password" required>
         </label>
+        <fieldset class="site-selector" aria-label="Unidade de produção">
+          <legend>Unidade de produção</legend>
+          <label>
+            <input type="radio" name="productionSite" value="PT" checked>
+            <span>Portugal</span>
+          </label>
+          <label>
+            <input type="radio" name="productionSite" value="LUX">
+            <span>Luxemburgo</span>
+          </label>
+        </fieldset>
         <button type="submit">Entrar</button>
         <p id="login-message" class="message hidden" role="alert"></p>
       </form>

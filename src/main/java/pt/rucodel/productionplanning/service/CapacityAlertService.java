@@ -5,11 +5,13 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.CapacityAlertStatus;
 import pt.rucodel.productionplanning.domain.CapacityAlertType;
 import pt.rucodel.productionplanning.domain.LifecycleStatus;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.dto.CapacityAlertResponse;
 import pt.rucodel.productionplanning.entity.CapacityAlertEntity;
 import pt.rucodel.productionplanning.entity.DailyProductionSettingsEntity;
 import pt.rucodel.productionplanning.entity.ProductionPlanEntity;
 import pt.rucodel.productionplanning.entity.ProductionPlanItemEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.entity.WheelIntakeRequestEntity;
 import pt.rucodel.productionplanning.repository.CapacityAlertRepository;
 import pt.rucodel.productionplanning.repository.DailyProductionSettingsRepository;
@@ -36,29 +38,42 @@ public class CapacityAlertService {
     private final CapacityAlertRepository alerts;
     private final WheelIntakeRequestRepository requests;
     private final DailyProductionSettingsRepository settings;
+    private final ProductionSiteService productionSites;
     private final Clock clock;
     private final ZoneId businessZone;
 
     public CapacityAlertService(CapacityAlertRepository alerts, WheelIntakeRequestRepository requests,
                                 DailyProductionSettingsRepository settings, Clock clock,
-                                AppProperties appProperties) {
+                                AppProperties appProperties,
+                                ProductionSiteService productionSites) {
         this.alerts = alerts;
         this.requests = requests;
         this.settings = settings;
+        this.productionSites = productionSites;
         this.clock = clock;
         this.businessZone = ZoneId.of(appProperties.timezone());
     }
 
     @Transactional(readOnly = true)
     public List<CapacityAlertResponse> listOpen() {
-        return alerts.findByStatusInOrderByAffectedDateAscCreatedAtAsc(OPEN_STATUSES).stream()
+        return listOpen(ProductionSiteCode.PT);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CapacityAlertResponse> listOpen(ProductionSiteCode siteCode) {
+        return alerts.findByProductionSite_CodeAndStatusInOrderByAffectedDateAscCreatedAtAsc(siteCode, OPEN_STATUSES).stream()
                 .map(this::toResponse)
                 .toList();
     }
 
     @Transactional
     public CapacityAlertResponse acknowledge(UUID id) {
-        CapacityAlertEntity entity = alerts.findById(id)
+        return acknowledge(ProductionSiteCode.PT, id);
+    }
+
+    @Transactional
+    public CapacityAlertResponse acknowledge(ProductionSiteCode siteCode, UUID id) {
+        CapacityAlertEntity entity = alerts.findByProductionSite_CodeAndId(siteCode, id)
                 .orElseThrow(() -> new pt.rucodel.productionplanning.exception.EntityNotFoundException("Capacity alert was not found."));
         if (entity.getStatus() == CapacityAlertStatus.ACTIVE) {
             entity.setStatus(CapacityAlertStatus.ACKNOWLEDGED);
@@ -68,19 +83,26 @@ public class CapacityAlertService {
 
     @Transactional
     public void recalculateFromToday() {
-        recalculate(LocalDate.now(clock.withZone(businessZone)));
+        recalculate(ProductionSiteCode.PT, LocalDate.now(clock.withZone(businessZone)));
     }
 
     @Transactional
     public void recalculate(LocalDate fromDate) {
+        recalculate(ProductionSiteCode.PT, fromDate);
+    }
+
+    @Transactional
+    public void recalculate(ProductionSiteCode siteCode, LocalDate fromDate) {
+        ProductionSiteEntity site = productionSites.requireByCode(siteCode);
+        ZoneId siteZone = ZoneId.of(site.getTimezone());
         OffsetDateTime now = OffsetDateTime.now(clock);
-        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanning(CLOSED_STATUSES);
+        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_STATUSES);
         Map<LocalDate, List<WheelIntakeRequestEntity>> requestsByDueDate = openRequests.stream()
-                .filter(request -> !request.getRequestedFactoryPickupWindowStart().atZoneSameInstant(businessZone).toLocalDate().isBefore(fromDate))
-                .collect(Collectors.groupingBy(request -> request.getRequestedFactoryPickupWindowStart().atZoneSameInstant(businessZone).toLocalDate()));
+                .filter(request -> !request.getRequestedFactoryPickupWindowStart().atZoneSameInstant(siteZone).toLocalDate().isBefore(fromDate))
+                .collect(Collectors.groupingBy(request -> request.getRequestedFactoryPickupWindowStart().atZoneSameInstant(siteZone).toLocalDate()));
 
         Set<LocalDate> datesToCheck = new HashSet<>(requestsByDueDate.keySet());
-        alerts.findByStatusInOrderByAffectedDateAscCreatedAtAsc(OPEN_STATUSES).stream()
+        alerts.findByProductionSite_CodeAndStatusInOrderByAffectedDateAscCreatedAtAsc(siteCode, OPEN_STATUSES).stream()
                 .map(CapacityAlertEntity::getAffectedDate)
                 .filter(date -> !date.isBefore(fromDate))
                 .forEach(datesToCheck::add);
@@ -90,13 +112,15 @@ public class CapacityAlertService {
             int required = dueRequests.stream().mapToInt(this::quantityForPlanning).sum();
             int capacity = effectiveCapacity(date);
             int deficit = Math.max(required - capacity, 0);
-            Optional<CapacityAlertEntity> existing = alerts.findFirstByTypeAndAffectedDateAndStatusIn(
+            Optional<CapacityAlertEntity> existing = alerts.findFirstByProductionSite_CodeAndTypeAndAffectedDateAndStatusIn(
+                    siteCode,
                     CapacityAlertType.OVERTIME_REQUIRED,
                     date,
                     OPEN_STATUSES
             );
             if (deficit > 0) {
                 CapacityAlertEntity alert = existing.orElseGet(CapacityAlertEntity::new);
+                alert.setProductionSite(site);
                 alert.setType(CapacityAlertType.OVERTIME_REQUIRED);
                 alert.setStatus(existing.map(CapacityAlertEntity::getStatus).orElse(CapacityAlertStatus.ACTIVE));
                 alert.setAffectedDate(date);
@@ -125,13 +149,16 @@ public class CapacityAlertService {
     @Transactional
     public void upsertFromPlan(ProductionPlanEntity plan, List<ProductionPlanItemEntity> items) {
         int deficit = Math.max(plan.getTotalPlanned() - plan.getMaximumTargetSnapshot(), 0);
-        Optional<CapacityAlertEntity> existing = alerts.findFirstByTypeAndAffectedDateAndStatusIn(
+        ProductionSiteCode siteCode = plan.getProductionSite().getCode();
+        Optional<CapacityAlertEntity> existing = alerts.findFirstByProductionSite_CodeAndTypeAndAffectedDateAndStatusIn(
+                siteCode,
                 CapacityAlertType.OVERTIME_REQUIRED,
                 plan.getPlanningDate(),
                 OPEN_STATUSES
         );
         if (deficit > 0) {
             CapacityAlertEntity alert = existing.orElseGet(CapacityAlertEntity::new);
+            alert.setProductionSite(plan.getProductionSite());
             alert.setType(CapacityAlertType.OVERTIME_REQUIRED);
             alert.setStatus(existing.map(CapacityAlertEntity::getStatus).orElse(CapacityAlertStatus.ACTIVE));
             alert.setAffectedDate(plan.getPlanningDate());

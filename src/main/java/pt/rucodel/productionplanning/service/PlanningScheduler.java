@@ -7,6 +7,9 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import pt.rucodel.productionplanning.domain.GenerationTrigger;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
+import pt.rucodel.productionplanning.exception.InvalidRequestException;
 
 import java.time.Clock;
 import java.time.LocalDate;
@@ -18,29 +21,67 @@ public class PlanningScheduler {
     private static final Logger LOGGER = LoggerFactory.getLogger(PlanningScheduler.class);
 
     private final MultiDayProductionPlanningService productionPlanningService;
+    private final ProductionSiteService productionSites;
     private final Clock clock;
-    private final ZoneId businessZone;
 
-    public PlanningScheduler(MultiDayProductionPlanningService productionPlanningService, Clock clock, AppProperties appProperties) {
+    public PlanningScheduler(MultiDayProductionPlanningService productionPlanningService,
+                             ProductionSiteService productionSites,
+                             Clock clock) {
         this.productionPlanningService = productionPlanningService;
+        this.productionSites = productionSites;
         this.clock = clock;
-        this.businessZone = ZoneId.of(appProperties.timezone());
     }
 
     @Scheduled(cron = "${app.planning.daily-cron}", zone = "${app.timezone}")
-    public void generateDailyPlan() {
-        LocalDate today = LocalDate.now(clock.withZone(businessZone));
-        LOGGER.info("Running scheduled production plan generation date={}", today);
-        productionPlanningService.recalculate(today, GenerationTrigger.SCHEDULED, "SYSTEM");
+    public void generateDailyPlanPortugal() {
+        runScheduledSite(ProductionSiteCode.PT, GenerationTrigger.SCHEDULED);
+    }
+
+    @Scheduled(cron = "${app.planning.daily-cron}", zone = "Europe/Luxembourg")
+    public void generateDailyPlanLuxembourg() {
+        runScheduledSite(ProductionSiteCode.LUX, GenerationTrigger.SCHEDULED);
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void recoverMissedCurrentDayPlan() {
-        LocalDate today = LocalDate.now(clock.withZone(businessZone));
-        LocalTime localTime = LocalTime.now(clock.withZone(businessZone));
-        if (!localTime.isBefore(LocalTime.of(7, 0)) || productionPlanningService.needsInitialPlanning(today)) {
-            LOGGER.info("Checking startup recovery production plan date={}", today);
-            productionPlanningService.recalculate(today, GenerationTrigger.STARTUP_RECOVERY, "SYSTEM");
+        for (ProductionSiteEntity site : productionSites.activeSites()) {
+            ZoneId zone = ZoneId.of(site.getTimezone());
+            LocalDate today = LocalDate.now(clock.withZone(zone));
+            LocalTime localTime = LocalTime.now(clock.withZone(zone));
+            if (!localTime.isBefore(LocalTime.of(7, 0))
+                    || productionPlanningService.needsInitialPlanning(site.getCode(), today)) {
+                runForSite(site, today, GenerationTrigger.STARTUP_RECOVERY);
+            }
+        }
+    }
+
+    private void runScheduledSite(ProductionSiteCode siteCode, GenerationTrigger trigger) {
+        ProductionSiteEntity site;
+        try {
+            site = productionSites.requireActive(siteCode);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("Skipping scheduled production plan generation because site is unavailable site={}", siteCode, ex);
+            return;
+        }
+        ZoneId zone = ZoneId.of(site.getTimezone());
+        runForSite(site, LocalDate.now(clock.withZone(zone)), trigger);
+    }
+
+    private void runForSite(ProductionSiteEntity site, LocalDate date, GenerationTrigger trigger) {
+        try {
+            LOGGER.info("Running production plan generation site={} date={} trigger={}", site.getCode(), date, trigger);
+            productionPlanningService.recalculate(site.getCode(), date, trigger, "SYSTEM");
+        } catch (InvalidRequestException ex) {
+            if ("TARGET_CONFIGURATION_MISSING".equals(ex.errorCode())) {
+                LOGGER.warn("Skipping production plan generation because targets are not configured site={} date={} trigger={} code={}",
+                        site.getCode(), date, trigger, ex.errorCode());
+                return;
+            }
+            LOGGER.error("Production plan generation failed site={} date={} trigger={}",
+                    site.getCode(), date, trigger, ex);
+        } catch (RuntimeException ex) {
+            LOGGER.error("Production plan generation failed site={} date={} trigger={}",
+                    site.getCode(), date, trigger, ex);
         }
     }
 }

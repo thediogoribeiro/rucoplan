@@ -19,6 +19,8 @@ import java.util.UUID;
 @Table(
         name = "production_plan_item",
         indexes = {
+                @Index(name = "idx_plan_item_site_plan", columnList = "production_site_id, plan_id"),
+                @Index(name = "idx_plan_item_site_request", columnList = "production_site_id, request_id"),
                 @Index(name = "idx_plan_item_plan", columnList = "plan_id"),
                 @Index(name = "idx_plan_item_request", columnList = "request_id"),
                 @Index(name = "idx_plan_item_risk", columnList = "risk_classification")
@@ -28,6 +30,10 @@ public class ProductionPlanItemEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id = UUID.randomUUID();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "plan_id", nullable = false)
@@ -105,7 +111,19 @@ public class ProductionPlanItemEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "line_status", nullable = false, length = 40)
-    private ProductionPlanLineStatus lineStatus = ProductionPlanLineStatus.PLANNED;
+    private ProductionPlanLineStatus lineStatus = ProductionPlanLineStatus.OPEN;
+
+    @Column(name = "closed_at")
+    private OffsetDateTime closedAt;
+
+    @Column(name = "closed_by", length = 160)
+    private String closedBy;
+
+    @Column(name = "reopened_at")
+    private OffsetDateTime reopenedAt;
+
+    @Column(name = "reopened_by", length = 160)
+    private String reopenedBy;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -116,6 +134,14 @@ public class ProductionPlanItemEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public ProductionPlanEntity getPlan() {
@@ -354,6 +380,38 @@ public class ProductionPlanItemEntity {
 
     public void setLineStatus(ProductionPlanLineStatus lineStatus) {
         this.lineStatus = lineStatus;
+    }
+
+    public OffsetDateTime getClosedAt() {
+        return closedAt;
+    }
+
+    public void setClosedAt(OffsetDateTime closedAt) {
+        this.closedAt = closedAt;
+    }
+
+    public String getClosedBy() {
+        return closedBy;
+    }
+
+    public void setClosedBy(String closedBy) {
+        this.closedBy = closedBy;
+    }
+
+    public OffsetDateTime getReopenedAt() {
+        return reopenedAt;
+    }
+
+    public void setReopenedAt(OffsetDateTime reopenedAt) {
+        this.reopenedAt = reopenedAt;
+    }
+
+    public String getReopenedBy() {
+        return reopenedBy;
+    }
+
+    public void setReopenedBy(String reopenedBy) {
+        this.reopenedBy = reopenedBy;
     }
 
     public OffsetDateTime getCreatedAt() {

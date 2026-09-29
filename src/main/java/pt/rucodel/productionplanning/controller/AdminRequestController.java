@@ -7,8 +7,10 @@ import pt.rucodel.productionplanning.domain.LifecycleStatus;
 import pt.rucodel.productionplanning.dto.*;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 import pt.rucodel.productionplanning.security.CurrentUserService;
+import pt.rucodel.productionplanning.service.MultiDayProductionPlanningService;
 import pt.rucodel.productionplanning.service.WheelIntakeRequestService;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,19 +19,27 @@ import java.util.UUID;
 public class AdminRequestController {
     private final WheelIntakeRequestService requests;
     private final CurrentUserService currentUserService;
+    private final MultiDayProductionPlanningService productionPlanning;
 
-    public AdminRequestController(WheelIntakeRequestService requests, CurrentUserService currentUserService) {
+    public AdminRequestController(WheelIntakeRequestService requests, CurrentUserService currentUserService,
+                                  MultiDayProductionPlanningService productionPlanning) {
         this.requests = requests;
         this.currentUserService = currentUserService;
+        this.productionPlanning = productionPlanning;
     }
 
     @GetMapping
     public PageResponse<RequestResponse> list(@RequestParam(required = false) UUID driverId,
                                               @RequestParam(required = false) UUID customerId,
                                               @RequestParam(required = false) LifecycleStatus status,
+                                              @RequestParam(required = false) LocalDate productionDate,
                                               @RequestParam(defaultValue = "0") int page,
                                               @RequestParam(defaultValue = "100") int size) {
-        return requests.listForAdmin(driverId, customerId, status, page, size);
+        AuthenticatedUser user = currentUserService.requireUser();
+        if (productionDate != null) {
+            return productionPlanning.requestsForProductionDate(user.productionSiteCode(), productionDate, page, size);
+        }
+        return requests.listForAdmin(user.productionSiteCode(), driverId, customerId, status, page, size);
     }
 
     @PostMapping
@@ -38,9 +48,15 @@ public class AdminRequestController {
         return requests.createForAdmin(request, currentUserService.requireUser());
     }
 
+    @PostMapping("/manual")
+    @ResponseStatus(HttpStatus.CREATED)
+    public RequestResponse createManual(@Valid @RequestBody ManualRequestCreateRequest request) {
+        return requests.createManual(request, currentUserService.requireUser());
+    }
+
     @GetMapping("/{requestId}")
     public RequestResponse get(@PathVariable UUID requestId) {
-        return requests.getForAdmin(requestId);
+        return requests.getForAdmin(currentUserService.requireUser().productionSiteCode(), requestId);
     }
 
     @PatchMapping("/{requestId}")

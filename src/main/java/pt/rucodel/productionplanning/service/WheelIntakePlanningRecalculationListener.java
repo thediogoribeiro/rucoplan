@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import pt.rucodel.productionplanning.domain.GenerationTrigger;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.domain.RequestSource;
 import pt.rucodel.productionplanning.domain.WheelIntakeRequestArrivedEvent;
 import pt.rucodel.productionplanning.domain.WheelIntakeRequestCommunicatedEvent;
@@ -25,51 +26,53 @@ public class WheelIntakePlanningRecalculationListener {
     private final WheelIntakeRequestRepository requests;
     private final MultiDayProductionPlanningService productionPlanning;
     private final Clock clock;
-    private final ZoneId businessZone;
 
     public WheelIntakePlanningRecalculationListener(WheelIntakeRequestRepository requests,
                                                     MultiDayProductionPlanningService productionPlanning,
-                                                    Clock clock,
-                                                    AppProperties appProperties) {
+                                                    Clock clock) {
         this.requests = requests;
         this.productionPlanning = productionPlanning;
         this.clock = clock;
-        this.businessZone = ZoneId.of(appProperties.timezone());
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void recalculateAfterRequestCommit(WheelIntakeRequestCommunicatedEvent event) {
-        recalculateAfterRequestCommit(event.requestId(), event.source(), "communicated");
+        recalculateAfterRequestCommit(event.requestId(), event.source(), event.productionSite(), "communicated");
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void recalculateAfterArrivalCommit(WheelIntakeRequestArrivedEvent event) {
-        recalculateAfterRequestCommit(event.requestId(), event.source(), "arrival");
+        recalculateAfterRequestCommit(event.requestId(), event.source(), event.productionSite(), "arrival");
     }
 
-    private void recalculateAfterRequestCommit(java.util.UUID requestId, RequestSource source, String reason) {
+    private void recalculateAfterRequestCommit(java.util.UUID requestId, RequestSource source,
+                                               ProductionSiteCode eventSite, String reason) {
         try {
             requests.findById(requestId)
                     .ifPresent(request -> {
                         LocalDate date = affectedDate(request);
-                        LOGGER.info("Production plan recalculation scheduled after request commit requestId={} requestCode={} source={} reason={} affectedDate={}",
-                                request.getId(), request.getRequestCode(), source, reason, date);
-                        productionPlanning.recalculate(date, GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
-                        LOGGER.info("Production plan recalculation completed after request commit requestId={} requestCode={} source={} reason={} affectedDate={}",
-                                request.getId(), request.getRequestCode(), source, reason, date);
+                        ProductionSiteCode site = request.getProductionSite() == null ? eventSite : request.getProductionSite().getCode();
+                        LOGGER.info("Production plan recalculation scheduled after request commit site={} requestId={} requestCode={} source={} reason={} affectedDate={}",
+                                site, request.getId(), request.getRequestCode(), source, reason, date);
+                        productionPlanning.recalculate(site, date, GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
+                        LOGGER.info("Production plan recalculation completed after request commit site={} requestId={} requestCode={} source={} reason={} affectedDate={}",
+                                site, request.getId(), request.getRequestCode(), source, reason, date);
                     });
         } catch (RuntimeException exception) {
-            LOGGER.warn("Production plan recalculation failed after request commit requestId={} source={} reason={}",
-                    requestId, source, reason, exception);
+            LOGGER.warn("Production plan recalculation failed after request commit site={} requestId={} source={} reason={}",
+                    eventSite, requestId, source, reason, exception);
         }
     }
 
     private LocalDate affectedDate(WheelIntakeRequestEntity request) {
-        LocalDate today = LocalDate.now(clock.withZone(businessZone));
+        ZoneId zone = request.getProductionSite() == null
+                ? ZoneId.of(ProductionSiteCode.PT.timezone())
+                : ZoneId.of(request.getProductionSite().getTimezone());
+        LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalDate availabilityDate = request.getExpectedFactoryDropOffWindowEnd()
-                .atZoneSameInstant(businessZone)
+                .atZoneSameInstant(zone)
                 .toLocalDate();
         return availabilityDate.isBefore(today) ? today : availabilityDate;
     }

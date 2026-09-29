@@ -57,6 +57,8 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/integrations/whatsapp/requests").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/integrations/whatsapp/webhook").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/integrations/whatsapp/webhook").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/integrations/telegram/webhook").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/driver/**").hasRole("DRIVER")

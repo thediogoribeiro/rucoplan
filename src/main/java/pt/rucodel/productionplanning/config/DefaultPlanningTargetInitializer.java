@@ -9,8 +9,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.PlanningTargetDefaults;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.ProductionTargetConfigurationEntity;
 import pt.rucodel.productionplanning.repository.ProductionTargetConfigurationRepository;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 
 @Component
 public class DefaultPlanningTargetInitializer implements ApplicationRunner {
@@ -19,20 +21,25 @@ public class DefaultPlanningTargetInitializer implements ApplicationRunner {
 
     private final ProductionTargetConfigurationRepository targets;
     private final JdbcTemplate jdbcTemplate;
+    private final ProductionSiteService productionSites;
 
-    public DefaultPlanningTargetInitializer(ProductionTargetConfigurationRepository targets, JdbcTemplate jdbcTemplate) {
+    public DefaultPlanningTargetInitializer(ProductionTargetConfigurationRepository targets, JdbcTemplate jdbcTemplate,
+                                            ProductionSiteService productionSites) {
         this.targets = targets;
         this.jdbcTemplate = jdbcTemplate;
+        this.productionSites = productionSites;
     }
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
         lockDefaultTargetInitialization();
-        if (targets.count() > 0) {
+        var portugal = productionSites.portugal();
+        if (!targets.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.PT).isEmpty()) {
             return;
         }
         ProductionTargetConfigurationEntity entity = new ProductionTargetConfigurationEntity();
+        entity.setProductionSite(portugal);
         entity.setMinimumDailyTarget(PlanningTargetDefaults.MINIMUM_DAILY_TARGET);
         entity.setRegularDailyCapacity(PlanningTargetDefaults.REGULAR_DAILY_CAPACITY);
         entity.setEffectiveFrom(PlanningTargetDefaults.EFFECTIVE_FROM);

@@ -16,6 +16,7 @@ import pt.rucodel.productionplanning.domain.*;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
 import pt.rucodel.productionplanning.service.DashboardEventPublisher;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 import pt.rucodel.productionplanning.telegram.*;
 
 import java.time.LocalDate;
@@ -53,10 +54,13 @@ class TelegramFlowIntegrationTest {
     @jakarta.annotation.Resource RequestStatusHistoryRepository history;
     @jakarta.annotation.Resource PlanningAuditEventRepository audit;
     @jakarta.annotation.Resource WhatsAppIngestionItemRepository whatsapp;
+    @jakarta.annotation.Resource DriverProductionSiteRepository driverSites;
+    @jakarta.annotation.Resource ProductionSiteService productionSites;
     @jakarta.annotation.Resource JdbcTemplate jdbcTemplate;
     @SpyBean DashboardEventPublisher dashboardEvents;
 
     private CustomerReferenceEntity customer;
+    private ProductionSiteEntity portugal;
 
     @BeforeEach
     void setUp() {
@@ -85,8 +89,10 @@ class TelegramFlowIntegrationTest {
         messagingIdentities.deleteAll();
         settings.deleteAll();
         customers.deleteAll();
+        driverSites.deleteAll();
         drivers.deleteAll();
 
+        portugal = productionSites.requireByCode(ProductionSiteCode.PT);
         customer = customers.save(customer("C1001", "Oficina Central Braga"));
         settings.save(settings(LocalDate.of(2099, 9, 10), 20));
     }
@@ -115,9 +121,12 @@ class TelegramFlowIntegrationTest {
         assertThat(identity.getDriver().getId()).isEqualTo(driver.getId());
         assertThat(identity.getOnboardingStatus()).isEqualTo(MessagingIdentityOnboardingStatus.COMPLETED);
         assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Obrigado, João Martins", "registo foi concluído"));
+        assertThat(bot.last()).contains("Para qual unidade de produção");
+
+        process(3, 9001L, 7001L, "olduser", "1");
         assertThat(bot.last()).contains("1/10 — Qual é o cliente?");
 
-        process(3, 9001L, 7001L, "newuser", "/start");
+        process(4, 9001L, 7001L, "newuser", "/start");
 
         assertThat(drivers.findAll()).hasSize(1);
         assertThat(messagingIdentities.findAll()).hasSize(1);
@@ -195,7 +204,7 @@ class TelegramFlowIntegrationTest {
                     assertThat(line.plannedWheelQuantityMap().get(WheelType.WASHED)).isEqualTo(6);
                     assertThat(line.plannedWheelQuantityMap().get(WheelType.NORMAL)).isEqualTo(15);
                 });
-        verify(dashboardEvents, atLeastOnce()).publishPlanUpdated(LocalDate.of(2099, 9, 10));
+        verify(dashboardEvents, atLeastOnce()).publishPlanUpdated(ProductionSiteCode.PT, LocalDate.of(2099, 9, 10));
 
         callback(25, 9101L, 7101L, "Confirmar pedido");
         assertThat(requests.findAll()).hasSize(1);
@@ -375,6 +384,7 @@ class TelegramFlowIntegrationTest {
     private void registerDriver(Long telegramUserId, Long chatId) {
         process(1000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "/start");
         process(2000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "Motorista Teste");
+        process(3000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "1");
         bot.clear();
     }
 
@@ -403,6 +413,7 @@ class TelegramFlowIntegrationTest {
 
     private CustomerReferenceEntity customer(String externalId, String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(portugal);
         entity.setExternalId(externalId);
         if (externalId != null && externalId.matches("C[0-9]+")) {
             entity.setCustomerNumber(Integer.parseInt(externalId.substring(1)));

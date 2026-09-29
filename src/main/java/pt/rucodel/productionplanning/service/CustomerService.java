@@ -5,7 +5,9 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.dto.CustomerRequest;
 import pt.rucodel.productionplanning.dto.CustomerResponse;
 import pt.rucodel.productionplanning.domain.CustomerStatus;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
 import pt.rucodel.productionplanning.exception.InvalidRequestException;
 import pt.rucodel.productionplanning.integration.CustomerDirectoryPort;
@@ -22,34 +24,56 @@ public class CustomerService {
     private final ApiMapper mapper;
     private final CustomerNameNormalizer normalizer;
     private final PublicCodeService publicCodes;
+    private final ProductionSiteService productionSites;
 
     public CustomerService(CustomerReferenceRepository customers, CustomerDirectoryPort customerDirectory, ApiMapper mapper,
-                           CustomerNameNormalizer normalizer, PublicCodeService publicCodes) {
+                           CustomerNameNormalizer normalizer, PublicCodeService publicCodes,
+                           ProductionSiteService productionSites) {
         this.customers = customers;
         this.customerDirectory = customerDirectory;
         this.mapper = mapper;
         this.normalizer = normalizer;
         this.publicCodes = publicCodes;
+        this.productionSites = productionSites;
     }
 
     @Transactional(readOnly = true)
     public List<CustomerResponse> search(String query, int limit) {
-        return customerDirectory.searchCustomers(query, limit).stream()
-                .map(customer -> customers.findById(customer.localId())
-                        .map(mapper::toCustomer)
-                        .orElseGet(() -> new CustomerResponse(customer.localId(), null, null, customer.externalId(),
-                                null, null, customer.officialName(), null, null, null, null, true, 0)))
+        return search(ProductionSiteCode.PT, query, limit);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerResponse> search(ProductionSiteCode siteCode, String query, int limit) {
+        String effectiveQuery = query == null ? "" : query.trim();
+        List<CustomerReferenceEntity> result = effectiveQuery.isBlank()
+                ? customers.findActiveForSite(siteCode)
+                : customers.searchForSite(siteCode, effectiveQuery);
+        return result.stream()
+                .limit(Math.max(1, Math.min(limit, 50)))
+                .map(mapper::toCustomer)
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public List<CustomerResponse> list() {
-        return customers.findByActiveTrueOrderByName().stream().map(mapper::toCustomer).toList();
+        return list(ProductionSiteCode.PT);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerResponse> list(ProductionSiteCode siteCode) {
+        return customers.findActiveForSite(siteCode).stream().map(mapper::toCustomer).toList();
     }
 
     @Transactional
     public CustomerResponse create(CustomerRequest request, String actor) {
+        return create(ProductionSiteCode.PT, request, actor);
+    }
+
+    @Transactional
+    public CustomerResponse create(ProductionSiteCode siteCode, CustomerRequest request, String actor) {
+        ProductionSiteEntity site = productionSites.requireActive(siteCode);
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(site);
         apply(entity, request);
         if (entity.getCustomerNumber() == null) {
             entity.setCustomerNumber(customers.nextCustomerNumber());
@@ -64,7 +88,12 @@ public class CustomerService {
 
     @Transactional
     public CustomerResponse update(UUID id, CustomerRequest request, String actor) {
-        CustomerReferenceEntity entity = customers.findById(id)
+        return update(ProductionSiteCode.PT, id, request, actor);
+    }
+
+    @Transactional
+    public CustomerResponse update(ProductionSiteCode siteCode, UUID id, CustomerRequest request, String actor) {
+        CustomerReferenceEntity entity = customers.findByIdForSite(siteCode, id)
                 .orElseThrow(() -> new EntityNotFoundException("Customer was not found."));
         if (request.version() != null && request.version() != entity.getVersion()) {
             throw new InvalidRequestException("OPTIMISTIC_LOCK", "Customer was changed by another user.");
@@ -79,12 +108,18 @@ public class CustomerService {
                 .orElseThrow(() -> new EntityNotFoundException("Customer was not found."));
     }
 
+    public CustomerReferenceEntity requireEntity(ProductionSiteCode siteCode, UUID id) {
+        return customers.findByIdForSite(siteCode, id).filter(CustomerReferenceEntity::isActive)
+                .orElseThrow(() -> new EntityNotFoundException("Customer was not found."));
+    }
+
     private void apply(CustomerReferenceEntity entity, CustomerRequest request) {
         entity.setExternalId(blankToNull(request.externalId()));
         entity.setExternalSystem(blankToNull(request.externalSystem()));
         entity.setExternalCustomerId(blankToNull(request.externalCustomerId()));
         if (entity.getExternalSystem() != null && entity.getExternalCustomerId() != null) {
-            customers.findByExternalSystemAndExternalCustomerId(entity.getExternalSystem(), entity.getExternalCustomerId())
+            customers.findExternalReferenceForSite(entity.getProductionSite().getCode(),
+                            entity.getExternalSystem(), entity.getExternalCustomerId())
                     .filter(existing -> !existing.getId().equals(entity.getId()))
                     .ifPresent(existing -> {
                         throw new InvalidRequestException("External customer reference is already linked to another customer.");

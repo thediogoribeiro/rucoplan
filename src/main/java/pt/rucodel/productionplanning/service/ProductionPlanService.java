@@ -55,13 +55,15 @@ public class ProductionPlanService {
     private final AuditService auditService;
     private final DashboardEventPublisher dashboardEventPublisher;
     private final CapacityAlertService capacityAlertService;
+    private final ProductionSiteService productionSiteService;
 
     public ProductionPlanService(ProductionPlanRepository plans, ProductionPlanItemRepository planItems,
                                  WheelIntakeRequestRepository requests, ProductionSettingsService settingsService,
                                  PlanningEngine planningEngine, ProductionDataPort productionData, ApiMapper mapper,
                                  Clock clock, AppProperties appProperties, JdbcTemplate jdbcTemplate,
                                  AuditService auditService, DashboardEventPublisher dashboardEventPublisher,
-                                 CapacityAlertService capacityAlertService) {
+                                 CapacityAlertService capacityAlertService,
+                                 ProductionSiteService productionSiteService) {
         this.plans = plans;
         this.planItems = planItems;
         this.requests = requests;
@@ -75,6 +77,7 @@ public class ProductionPlanService {
         this.auditService = auditService;
         this.dashboardEventPublisher = dashboardEventPublisher;
         this.capacityAlertService = capacityAlertService;
+        this.productionSiteService = productionSiteService;
     }
 
     @Transactional(readOnly = true)
@@ -103,6 +106,7 @@ public class ProductionPlanService {
             throw new InvalidRequestException("PLAN_LOCKED", "A production plan is already being generated for this date.");
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
+        ProductionSiteEntity site = productionSiteService.requireByCode(ProductionSiteCode.PT);
         DailyProductionSettingsEntity effectiveSettings = settingsService.effectiveSettings(date);
         ProductionPlanEntity previous = plans.findFirstByPlanningDateOrderByVersionNumberDesc(date).orElse(null);
         Map<UUID, ProductionPlanItemEntity> previousItems = previous == null
@@ -124,6 +128,7 @@ public class ProductionPlanService {
 
         plans.clearCurrentPlan(date);
         ProductionPlanEntity plan = new ProductionPlanEntity();
+        plan.setProductionSite(site);
         plan.setPlanningDate(date);
         plan.setVersionNumber(plans.findMaxVersion(date) + 1);
         plan.setCurrentPlan(true);
@@ -154,8 +159,8 @@ public class ProductionPlanService {
                 .toList());
         auditService.record(savedPlan.getId(), null, "PLAN_GENERATED", actor,
                 "Generated plan version " + savedPlan.getVersionNumber() + " for " + date + " using trigger " + trigger + ".");
-        capacityAlertService.recalculate(date);
-        dashboardEventPublisher.publishPlanUpdated(date);
+        capacityAlertService.recalculate(site.getCode(), date);
+        dashboardEventPublisher.publishPlanUpdated(site.getCode(), date);
         return mapper.toPlan(savedPlan, savedItems);
     }
 
@@ -266,7 +271,7 @@ public class ProductionPlanService {
         return new PlanningWorkItem(
                 request.getId(),
                 request.getCustomerNameSnapshot(),
-                request.getDriver().getName(),
+                request.getDriver() == null ? "Sem motorista" : request.getDriver().getName(),
                 quantity,
                 request.getCreatedAt(),
                 request.getExpectedFactoryDropOffWindowStart(),
@@ -290,6 +295,7 @@ public class ProductionPlanService {
                 .findFirst()
                 .orElseThrow(() -> new EntityNotFoundException("Planning request was not found."));
         ProductionPlanItemEntity entity = new ProductionPlanItemEntity();
+        entity.setProductionSite(plan.getProductionSite());
         entity.setPlan(plan);
         entity.setRequest(request);
         entity.setCustomerName(result.customerName());
@@ -314,7 +320,7 @@ public class ProductionPlanService {
         entity.setLocked(result.locked());
         entity.setCarriedOver(false);
         entity.setAdvancedFromFuture(false);
-        entity.setLineStatus(pt.rucodel.productionplanning.domain.ProductionPlanLineStatus.PLANNED);
+        entity.setLineStatus(pt.rucodel.productionplanning.domain.ProductionPlanLineStatus.OPEN);
         entity.setCreatedAt(OffsetDateTime.now(clock));
         return entity;
     }

@@ -20,6 +20,9 @@ import java.util.UUID;
 @Table(
         name = "wheel_intake_request",
         indexes = {
+                @Index(name = "idx_wheel_request_site_status", columnList = "production_site_id, lifecycle_status"),
+                @Index(name = "idx_wheel_request_site_pickup", columnList = "production_site_id, requested_factory_pickup_start"),
+                @Index(name = "idx_wheel_request_site_dropoff", columnList = "production_site_id, expected_factory_dropoff_end"),
                 @Index(name = "idx_wheel_request_driver_status", columnList = "driver_id, lifecycle_status"),
                 @Index(name = "idx_wheel_request_pickup_start", columnList = "requested_factory_pickup_start"),
                 @Index(name = "idx_wheel_request_dropoff_end", columnList = "expected_factory_dropoff_end"),
@@ -37,6 +40,10 @@ public class WheelIntakeRequestEntity extends BaseEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source", nullable = false, length = 40)
@@ -66,7 +73,7 @@ public class WheelIntakeRequestEntity extends BaseEntity {
     private String customerNameSnapshot;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "driver_id", nullable = false)
+    @JoinColumn(name = "driver_id")
     private DriverEntity driver;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -206,6 +213,14 @@ public class WheelIntakeRequestEntity extends BaseEntity {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public RequestSource getSource() {
@@ -369,6 +384,22 @@ public class WheelIntakeRequestEntity extends BaseEntity {
             }
             int completed = Math.max(completedByType.getOrDefault(type, 0), 0);
             quantity.setCompletedQuantity(Math.min(quantity.getQuantity(), quantity.getCompletedQuantity() + completed));
+        }
+        completedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getCompletedQuantity).sum();
+    }
+
+    public void subtractCompletedWheelQuantities(Map<WheelType, Integer> completedByType) {
+        Map<WheelType, RequestWheelQuantityEntity> byType = new EnumMap<>(WheelType.class);
+        for (RequestWheelQuantityEntity quantity : wheelQuantities) {
+            byType.put(quantity.getWheelType(), quantity);
+        }
+        for (WheelType type : WheelType.values()) {
+            RequestWheelQuantityEntity quantity = byType.get(type);
+            if (quantity == null) {
+                continue;
+            }
+            int completed = Math.max(completedByType.getOrDefault(type, 0), 0);
+            quantity.setCompletedQuantity(Math.max(0, quantity.getCompletedQuantity() - completed));
         }
         completedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getCompletedQuantity).sum();
     }

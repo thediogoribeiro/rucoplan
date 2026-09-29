@@ -8,4 +8,10 @@ import java.util.UUID;
 
 public interface WhatsAppIngestionItemRepository extends JpaRepository<WhatsAppIngestionItemEntity, UUID> {
     Optional<WhatsAppIngestionItemEntity> findByExternalMessageId(String externalMessageId);
+
+    long countByStatus(pt.rucodel.productionplanning.domain.IngestionStatus status);
+
+    Optional<WhatsAppIngestionItemEntity> findFirstByOrderByReceivedAtDesc();
+
+    Optional<WhatsAppIngestionItemEntity> findFirstByProcessedAtIsNotNullOrderByProcessedAtDesc();
 }

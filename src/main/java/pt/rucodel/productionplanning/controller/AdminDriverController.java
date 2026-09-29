@@ -25,7 +25,7 @@ public class AdminDriverController {
 
     @GetMapping
     public List<DriverResponse> list() {
-        return drivers.list();
+        return drivers.list(currentUserService.requireUser().productionSiteCode());
     }
 
     @GetMapping("/{driverId}")
@@ -36,7 +36,8 @@ public class AdminDriverController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public DriverResponse create(@Valid @RequestBody DriverRequest request) {
-        return drivers.create(request, currentUserService.requireUser().actorLabel());
+        var user = currentUserService.requireUser();
+        return drivers.create(user.productionSiteCode(), request, user.actorLabel());
     }
 
     @PatchMapping("/{driverId}")

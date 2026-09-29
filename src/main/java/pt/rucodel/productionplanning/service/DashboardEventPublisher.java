@@ -3,6 +3,7 @@ package pt.rucodel.productionplanning.service;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import pt.rucodel.productionplanning.domain.DashboardPlanUpdatedEvent;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 
 import java.time.LocalDate;
 
@@ -15,6 +16,10 @@ public class DashboardEventPublisher {
     }
 
     public void publishPlanUpdated(LocalDate date) {
-        publisher.publishEvent(new DashboardPlanUpdatedEvent(date));
+        publishPlanUpdated(ProductionSiteCode.PT, date);
+    }
+
+    public void publishPlanUpdated(ProductionSiteCode siteCode, LocalDate date) {
+        publisher.publishEvent(new DashboardPlanUpdatedEvent(siteCode, date));
     }
 }

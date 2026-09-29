@@ -65,7 +65,11 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
                     user.getUsername(),
                     user.getDisplayName(),
                     user.getRole(),
-                    user.getDriver() == null ? null : user.getDriver().getId()
+                    user.getDriver() == null ? null : user.getDriver().getId(),
+                    claims.productionSiteId(),
+                    claims.productionSiteCode(),
+                    claims.productionSiteName(),
+                    claims.productionSiteTimezone()
             );
             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                     principal,

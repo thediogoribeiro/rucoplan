@@ -6,6 +6,9 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -20,6 +23,8 @@ import java.util.UUID;
 @Table(
         name = "customer_reference",
         indexes = {
+                @Index(name = "idx_customer_reference_site_name", columnList = "production_site_id, name"),
+                @Index(name = "idx_customer_reference_site_normalized_name", columnList = "production_site_id, normalized_name"),
                 @Index(name = "idx_customer_reference_external_id", columnList = "external_id"),
                 @Index(name = "idx_customer_reference_customer_code", columnList = "customer_code"),
                 @Index(name = "idx_customer_reference_customer_number", columnList = "customer_number"),
@@ -33,13 +38,17 @@ public class CustomerReferenceEntity extends BaseEntity {
     @Column(name = "id", nullable = false)
     private UUID id;
 
-    @Column(name = "external_id", length = 120, unique = true)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
+
+    @Column(name = "external_id", length = 120)
     private String externalId;
 
-    @Column(name = "customer_code", length = 20, unique = true)
+    @Column(name = "customer_code", length = 20)
     private String customerCode;
 
-    @Column(name = "customer_number", unique = true)
+    @Column(name = "customer_number")
     private Integer customerNumber;
 
     @Column(name = "external_system", length = 80)
@@ -108,6 +117,14 @@ public class CustomerReferenceEntity extends BaseEntity {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public String getExternalId() {

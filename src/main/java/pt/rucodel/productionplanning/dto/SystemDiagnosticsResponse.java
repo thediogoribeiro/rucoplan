@@ -8,7 +8,8 @@ public record SystemDiagnosticsResponse(
         BackendDiagnostics backend,
         DatabaseDiagnostics database,
         RealtimeDiagnostics realtime,
-        PlanningDiagnostics planning
+        PlanningDiagnostics planning,
+        WhatsAppDiagnostics whatsapp
 ) {
     public record BackendDiagnostics(
             String status,
@@ -75,6 +76,22 @@ public record SystemDiagnosticsResponse(
             int minimumDailyTarget,
             int regularDailyCapacity,
             String source
+    ) {
+    }
+
+    public record WhatsAppDiagnostics(
+            boolean enabled,
+            boolean webhookConfigurationPresent,
+            boolean sendConfigurationPresent,
+            String graphApiVersion,
+            String webhookPublicUrlConfigured,
+            OffsetDateTime lastWebhookReceivedAt,
+            OffsetDateTime lastMessageProcessedAt,
+            String lastOutboundMessageStatus,
+            String lastError,
+            Long pendingMessages,
+            String cloudApiStatus,
+            String correlationId
     ) {
     }
 }

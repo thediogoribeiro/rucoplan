@@ -9,6 +9,7 @@ public record AuthUserResponse(
         String username,
         String displayName,
         UserRole role,
-        UUID driverId
+        UUID driverId,
+        ProductionSiteResponse productionSite
 ) {
 }

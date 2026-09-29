@@ -44,6 +44,25 @@ public class DriverRegistrationService {
         return saved;
     }
 
+    @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = InvalidRequestException.class)
+    public DriverEntity registerFromWhatsAppName(MessagingIdentityEntity identity, String rawName) {
+        if (identity.getDriver() != null) {
+            return identity.getDriver();
+        }
+        String name = validateAndNormalizeName(rawName);
+        DriverEntity driver = new DriverEntity();
+        driver.setDriverCode(publicCodes.driverCode(drivers.nextDriverCodeNumber()));
+        driver.setName(name);
+        driver.setActive(true);
+        driver.setCreatedBy("WHATSAPP");
+        driver.setUpdatedBy("WHATSAPP");
+        DriverEntity saved = drivers.saveAndFlush(driver);
+        identity.setDriver(saved);
+        identities.completeOnboarding(identity);
+        identities.record(identity, MessagingIdentityEventType.DRIVER_NAME_REGISTERED, "WHATSAPP", "****" + identity.getExternalUserId().substring(Math.max(0, identity.getExternalUserId().length() - 4)), null);
+        return saved;
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void refreshLegacyTelegramFields(DriverEntity driver, TelegramIdentitySnapshot snapshot) {
         applyLegacyTelegramFields(driver, snapshot);

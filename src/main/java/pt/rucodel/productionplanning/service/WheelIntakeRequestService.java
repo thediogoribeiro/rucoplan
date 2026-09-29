@@ -13,6 +13,7 @@ import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
 import pt.rucodel.productionplanning.entity.CustomerRegistrationRequestEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
 import pt.rucodel.productionplanning.entity.MessagingIdentityEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.entity.RequestStatusHistoryEntity;
 import pt.rucodel.productionplanning.entity.WheelIntakeRequestEntity;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
@@ -26,7 +27,9 @@ import pt.rucodel.productionplanning.repository.WheelIntakeRequestRepository;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 
 import java.time.Clock;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.EnumSet;
 import java.util.List;
@@ -54,13 +57,19 @@ public class WheelIntakeRequestService {
     private final ApplicationEventPublisher eventPublisher;
     private final WheelQuantityService wheelQuantityService;
     private final PublicCodeService publicCodes;
+    private final ProductionSiteService productionSites;
+    private final ZoneId businessZone;
+    private final LocalTime overnightEndTime;
 
     public WheelIntakeRequestService(WheelIntakeRequestRepository requests, CustomerReferenceRepository customers,
                                      DriverRepository drivers, RequestStatusHistoryRepository statusHistory,
                                      ApiMapper mapper, Clock clock, RecalculationService recalculationService,
                                      AuditService auditService, ApplicationEventPublisher eventPublisher,
                                      WheelQuantityService wheelQuantityService,
-                                     PublicCodeService publicCodes) {
+                                     PublicCodeService publicCodes,
+                                     ProductionSiteService productionSites,
+                                     AppProperties appProperties,
+                                     @org.springframework.beans.factory.annotation.Value("${app.planning.overnight-end-time:06:00}") String overnightEndTime) {
         this.requests = requests;
         this.customers = customers;
         this.drivers = drivers;
@@ -72,18 +81,24 @@ public class WheelIntakeRequestService {
         this.eventPublisher = eventPublisher;
         this.wheelQuantityService = wheelQuantityService;
         this.publicCodes = publicCodes;
+        this.productionSites = productionSites;
+        this.businessZone = ZoneId.of(appProperties.timezone());
+        this.overnightEndTime = LocalTime.parse(overnightEndTime);
     }
 
     @Transactional
     public RequestResponse createForDriver(RequestCreateRequest request, AuthenticatedUser user) {
+        ProductionSiteEntity site = productionSites.requireByCode(user.productionSiteCode());
         DriverEntity driver = drivers.findById(user.driverId())
                 .orElseThrow(() -> new EntityNotFoundException("Driver was not found."));
+        requireDriverSite(driver, site);
         WheelIntakeRequestEntity entity = createEntity(
+                site,
                 RequestSource.WEB,
                 null,
                 null,
                 driver,
-                requireCustomer(request.customerId()),
+                requireCustomer(user.productionSiteCode(), request.customerId()),
                 wheelQuantityService.normalize(request.wheelQuantities(), request.expectedWheelQuantity()),
                 request.expectedFactoryDropOffWindowStart(),
                 request.expectedFactoryDropOffWindowEnd(),
@@ -97,14 +112,17 @@ public class WheelIntakeRequestService {
 
     @Transactional
     public RequestResponse createForAdmin(AdminRequestCreateRequest request, AuthenticatedUser user) {
+        ProductionSiteEntity site = productionSites.requireByCode(user.productionSiteCode());
         DriverEntity driver = drivers.findById(request.driverId())
                 .orElseThrow(() -> new EntityNotFoundException("Driver was not found."));
+        requireDriverSite(driver, site);
         WheelIntakeRequestEntity entity = createEntity(
+                site,
                 RequestSource.WEB,
                 null,
                 null,
                 driver,
-                requireCustomer(request.customerId()),
+                requireCustomer(user.productionSiteCode(), request.customerId()),
                 wheelQuantityService.normalize(request.wheelQuantities(), request.expectedWheelQuantity()),
                 request.expectedFactoryDropOffWindowStart(),
                 request.expectedFactoryDropOffWindowEnd(),
@@ -119,10 +137,82 @@ public class WheelIntakeRequestService {
     }
 
     @Transactional
+    public RequestResponse createManual(ManualRequestCreateRequest request, AuthenticatedUser user) {
+        ProductionSiteEntity site = productionSites.requireByCode(user.productionSiteCode());
+        ZoneId siteZone = productionSites.zone(site);
+        CustomerReferenceEntity customer = requireCustomer(user.productionSiteCode(), request.customerReferenceId());
+        DriverEntity driver = request.driverId() == null ? null : drivers.findById(request.driverId())
+                .orElseThrow(() -> new EntityNotFoundException("Driver was not found."));
+        if (driver != null) {
+            requireDriverSite(driver, site);
+        }
+        boolean alreadyAtFactory = Boolean.TRUE.equals(request.alreadyAtFactory());
+        OffsetDateTime arrivalAt = request.actualArrivalAt();
+        if (alreadyAtFactory && arrivalAt == null) {
+            throw new InvalidRequestException("MANUAL_ARRIVAL_REQUIRED",
+                    "A chegada real é obrigatória quando as jantes já estão na fábrica.");
+        }
+        if (arrivalAt != null && arrivalAt.isAfter(OffsetDateTime.now(clock).plusMinutes(5))) {
+            throw new InvalidRequestException("MANUAL_ARRIVAL_IN_FUTURE",
+                    "A chegada real não pode ser uma data futura.");
+        }
+        if (!alreadyAtFactory && (request.expectedFactoryDropoffDate() == null || request.expectedFactoryDropoffWindow() == null)) {
+            throw new InvalidRequestException("MANUAL_EXPECTED_ARRIVAL_REQUIRED",
+                    "A chegada prevista e o intervalo são obrigatórios quando as jantes ainda não chegaram.");
+        }
+        OffsetDateTime dropoffStart = alreadyAtFactory
+                ? arrivalAt
+                : request.expectedFactoryDropoffWindow().startAt(request.expectedFactoryDropoffDate(), siteZone);
+        OffsetDateTime dropoffEnd = alreadyAtFactory
+                ? arrivalAt
+                : request.expectedFactoryDropoffWindow().endAt(request.expectedFactoryDropoffDate(), siteZone, overnightEndTime);
+        OffsetDateTime pickupStart = request.requestedPickupWindow().startAt(request.requestedPickupDate(), siteZone);
+        OffsetDateTime pickupEnd = request.requestedPickupWindow().endAt(request.requestedPickupDate(), siteZone, overnightEndTime);
+        WheelIntakeRequestEntity entity = createEntity(
+                site,
+                RequestSource.MANUAL,
+                "MANUAL_FACTORY_INTAKE",
+                null,
+                driver,
+                customer,
+                wheelQuantityService.normalize(request.wheelQuantities(), null),
+                dropoffStart,
+                dropoffEnd,
+                pickupStart,
+                pickupEnd,
+                request.notes(),
+                user.actorLabel()
+        );
+        entity.setFactoryDropoffSlot(alreadyAtFactory ? null : request.expectedFactoryDropoffWindow());
+        entity.setFactoryPickupSlot(request.requestedPickupWindow());
+        if (alreadyAtFactory) {
+            entity.setLifecycleStatus(LifecycleStatus.AT_FACTORY);
+            entity.setActualFactoryArrivalAt(arrivalAt);
+            entity.setArrivalConfirmedAt(OffsetDateTime.now(clock));
+            entity.setArrivalConfirmedBy(user.actorLabel());
+            entity.setArrivalConfirmationSource("MANUAL_FACTORY_INTAKE");
+        }
+        WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
+        recordStatus(saved, null, saved.getLifecycleStatus(), user.id(), user.actorLabel(),
+                alreadyAtFactory ? "Pedido manual criado com chegada física confirmada." : "Pedido manual comunicado.");
+        recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
+        auditService.record(null, saved.getId(), "REQUEST_CREATED", user.actorLabel(), "Manual request created.");
+        logCommunicatedRequest(saved);
+        if (alreadyAtFactory) {
+            eventPublisher.publishEvent(new WheelIntakeRequestArrivedEvent(saved.getId(), saved.getSource(), saved.getProductionSite().getCode()));
+        } else {
+            publishRequestCommunicated(saved);
+        }
+        return mapper.toRequest(saved);
+    }
+
+    @Transactional
     public WheelIntakeRequestEntity createFromIntegration(String externalMessageId, DriverEntity driver,
                                                          CustomerReferenceEntity customer, WhatsAppIntakeRequest request,
                                                          String actor) {
+        ProductionSiteEntity site = requireSiteFromCustomer(customer);
         WheelIntakeRequestEntity entity = createEntity(
+                site,
                 RequestSource.WHATSAPP_AGENT,
                 "WHATSAPP_AGENT",
                 externalMessageId,
@@ -138,8 +228,52 @@ public class WheelIntakeRequestService {
         );
         WheelIntakeRequestEntity saved = requests.save(entity);
         recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, actor, "Pedido comunicado pelo agente WhatsApp.");
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", actor, "Request created from WhatsApp agent.");
+        logCommunicatedRequest(saved);
+        publishRequestCommunicated(saved);
+        return saved;
+    }
+
+    @Transactional
+    public WheelIntakeRequestEntity createFromWhatsApp(String externalMessageId, DriverEntity driver,
+                                                       MessagingIdentityEntity submittedByIdentity,
+                                                       CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                       OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
+                                                       FactoryTimeSlot dropoffSlot,
+                                                       OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
+                                                       FactoryTimeSlot pickupSlot,
+                                                       String notes) {
+        ProductionSiteEntity site = requireSiteFromCustomer(customer);
+        String idempotencyKey = blankToNull(externalMessageId);
+        if (idempotencyKey != null) {
+            java.util.Optional<WheelIntakeRequestEntity> existing = requests.findByExternalMessageId(idempotencyKey);
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+        }
+        WheelIntakeRequestEntity entity = createEntity(
+                site,
+                RequestSource.WHATSAPP,
+                "WHATSAPP_CLOUD_API",
+                idempotencyKey,
+                driver,
+                customer,
+                quantities,
+                dropOffStart,
+                dropOffEnd,
+                pickupStart,
+                pickupEnd,
+                notes,
+                "WHATSAPP"
+        );
+        entity.setSubmittedByIdentity(submittedByIdentity);
+        entity.setFactoryDropoffSlot(dropoffSlot);
+        entity.setFactoryPickupSlot(pickupSlot);
+        WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, "WHATSAPP", "Pedido comunicado pelo WhatsApp.");
+        recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
+        auditService.record(null, saved.getId(), "REQUEST_CREATED", "WHATSAPP", "Request created from WhatsApp.");
         logCommunicatedRequest(saved);
         publishRequestCommunicated(saved);
         return saved;
@@ -207,6 +341,7 @@ public class WheelIntakeRequestService {
                                                                OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
                                                                FactoryTimeSlot pickupSlot,
                                                                String notes) {
+        ProductionSiteEntity site = requireSiteFromCustomerOrPending(customer, pendingCustomer);
         String idempotencyKey = blankToNull(externalMessageId);
         if (idempotencyKey != null) {
             java.util.Optional<WheelIntakeRequestEntity> existing = requests.findByExternalMessageId(idempotencyKey);
@@ -215,6 +350,7 @@ public class WheelIntakeRequestService {
             }
         }
         WheelIntakeRequestEntity entity = createEntity(
+                site,
                 RequestSource.TELEGRAM,
                 "TELEGRAM",
                 idempotencyKey,
@@ -235,7 +371,7 @@ public class WheelIntakeRequestService {
         entity.setFactoryPickupSlot(pickupSlot);
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
         recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, "TELEGRAM", "Pedido comunicado pelo bot Telegram.");
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", "TELEGRAM", "Request created from Telegram bot.");
         logCommunicatedRequest(saved);
         publishRequestCommunicated(saved);
@@ -253,8 +389,14 @@ public class WheelIntakeRequestService {
 
     @Transactional(readOnly = true)
     public PageResponse<RequestResponse> listForAdmin(UUID driverId, UUID customerId, LifecycleStatus status, int page, int size) {
+        return listForAdmin(ProductionSiteCode.PT, driverId, customerId, status, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RequestResponse> listForAdmin(ProductionSiteCode siteCode, UUID driverId, UUID customerId, LifecycleStatus status, int page, int size) {
         return mapper.toPage(
-                requests.search(driverId, customerId, status, PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100))),
+                requests.searchForSite(siteCode, driverId, customerId, status,
+                        PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100))),
                 mapper::toRequest
         );
     }
@@ -272,13 +414,23 @@ public class WheelIntakeRequestService {
     }
 
     @Transactional(readOnly = true)
+    public RequestResponse getForAdmin(ProductionSiteCode siteCode, UUID requestId) {
+        return mapper.toRequest(requireRequest(siteCode, requestId));
+    }
+
+    @Transactional(readOnly = true)
     public List<RequestResponse> listFactoryArrivals(LifecycleStatus status) {
+        return listFactoryArrivals(ProductionSiteCode.PT, status);
+    }
+
+    @Transactional(readOnly = true)
+    public List<RequestResponse> listFactoryArrivals(ProductionSiteCode siteCode, LifecycleStatus status) {
         LifecycleStatus effectiveStatus = status == null ? LifecycleStatus.COMMUNICATED : status;
         if (effectiveStatus != LifecycleStatus.COMMUNICATED) {
             throw new InvalidRequestException("FACTORY_ARRIVAL_STATUS_INVALID",
                     "A Entrada na Fábrica lista apenas pedidos comunicados.");
         }
-        return requests.findFactoryArrivalQueue(effectiveStatus).stream()
+        return requests.findFactoryArrivalQueueForSite(siteCode, effectiveStatus).stream()
                 .map(mapper::toRequest)
                 .toList();
     }
@@ -291,16 +443,16 @@ public class WheelIntakeRequestService {
             throw new ForbiddenOperationException("Driver requests can only be edited before the wheels are confirmed at the factory.");
         }
         applyUpdate(entity, update, false, user.actorLabel());
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         auditService.record(null, entity.getId(), "REQUEST_UPDATED", user.actorLabel(), "Driver updated request.");
         return mapper.toRequest(requests.saveAndFlush(entity));
     }
 
     @Transactional
     public RequestResponse updateForAdmin(UUID requestId, RequestUpdateRequest update, AuthenticatedUser user) {
-        WheelIntakeRequestEntity entity = requireRequest(requestId);
+        WheelIntakeRequestEntity entity = requireRequest(user.productionSiteCode(), requestId);
         applyUpdate(entity, update, true, user.actorLabel());
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         auditService.record(null, entity.getId(), "REQUEST_UPDATED", user.actorLabel(), "Administrator updated request.");
         return mapper.toRequest(requests.saveAndFlush(entity));
     }
@@ -317,14 +469,16 @@ public class WheelIntakeRequestService {
             throw new ForbiddenOperationException("Only future requests can be cancelled by the driver.");
         }
         changeStatus(entity, LifecycleStatus.CANCELLED, user, "Pedido cancelado pelo motorista/vendedor.");
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         RequestResponse response = mapper.toRequest(requests.saveAndFlush(entity));
         return response;
     }
 
     @Transactional
     public RequestResponse confirmArrival(UUID requestId, ConfirmArrivalRequest request, AuthenticatedUser user) {
-        WheelIntakeRequestEntity entity = requireRequest(requestId);
+        WheelIntakeRequestEntity entity = user.role() == UserRole.DRIVER
+                ? requireRequest(requestId)
+                : requireRequest(user.productionSiteCode(), requestId);
         if (user.role() == UserRole.DRIVER) {
             requireDriverOwnership(entity, user.driverId());
         }
@@ -357,20 +511,20 @@ public class WheelIntakeRequestService {
         } else {
             auditService.record(null, entity.getId(), "REQUEST_ARRIVAL_CONFIRMED", user.actorLabel(), "Factory arrival confirmed.");
         }
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        eventPublisher.publishEvent(new WheelIntakeRequestArrivedEvent(saved.getId(), saved.getSource()));
+        eventPublisher.publishEvent(new WheelIntakeRequestArrivedEvent(saved.getId(), saved.getSource(), saved.getProductionSite().getCode()));
         return mapper.toRequest(saved);
     }
 
     @Transactional
     public RequestResponse confirmReceivedQuantity(UUID requestId, ConfirmReceivedQuantityRequest request, AuthenticatedUser user) {
-        WheelIntakeRequestEntity entity = requireRequest(requestId);
+        WheelIntakeRequestEntity entity = requireRequest(user.productionSiteCode(), requestId);
         requireVersion(entity, request.version());
         entity.setActualReceivedWheelQuantity(request.actualReceivedWheelQuantity());
         entity.setQuantityDiscrepancyAcknowledged(discrepancyAcknowledged(entity, request.acknowledgeDiscrepancy()));
         entity.setUpdatedBy(user.actorLabel());
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         auditService.record(null, entity.getId(), "RECEIVED_QUANTITY_CONFIRMED", user.actorLabel(),
                 "Received quantity confirmed as " + request.actualReceivedWheelQuantity() + ".");
         return mapper.toRequest(requests.saveAndFlush(entity));
@@ -383,7 +537,7 @@ public class WheelIntakeRequestService {
 
     @Transactional
     public RequestResponse updatePriority(UUID requestId, PriorityRequest request, AuthenticatedUser user) {
-        WheelIntakeRequestEntity entity = requireRequest(requestId);
+        WheelIntakeRequestEntity entity = requireRequest(user.productionSiteCode(), requestId);
         requireVersion(entity, request.version());
         if (request.manualPriority() != null && request.manualPriority() <= 0) {
             throw new InvalidRequestException("Manual priority must be greater than zero.");
@@ -391,7 +545,7 @@ public class WheelIntakeRequestService {
         entity.setManualPriority(request.manualPriority());
         entity.setPlanningLocked(Boolean.TRUE.equals(request.planningLocked()));
         entity.setUpdatedBy(user.actorLabel());
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         auditService.record(null, entity.getId(), "PRIORITY_UPDATED", user.actorLabel(),
                 "Priority/lock changed. " + (request.reason() == null ? "" : request.reason()));
         return mapper.toRequest(requests.saveAndFlush(entity));
@@ -411,7 +565,7 @@ public class WheelIntakeRequestService {
     private RequestResponse persistCreated(WheelIntakeRequestEntity entity, AuthenticatedUser user) {
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
         recordStatus(saved, null, LifecycleStatus.COMMUNICATED, user.id(), user.actorLabel(), "Pedido comunicado.");
-        recalculationService.markCurrentAndFuturePlans();
+        recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", user.actorLabel(), "Request created.");
         logCommunicatedRequest(saved);
         publishRequestCommunicated(saved);
@@ -419,19 +573,19 @@ public class WheelIntakeRequestService {
     }
 
     private void publishRequestCommunicated(WheelIntakeRequestEntity request) {
-        eventPublisher.publishEvent(new WheelIntakeRequestCommunicatedEvent(request.getId(), request.getSource()));
+        eventPublisher.publishEvent(new WheelIntakeRequestCommunicatedEvent(request.getId(), request.getSource(), request.getProductionSite().getCode()));
     }
 
-    private WheelIntakeRequestEntity createEntity(RequestSource source, String externalSourceReference, String externalMessageId,
+    private WheelIntakeRequestEntity createEntity(ProductionSiteEntity site, RequestSource source, String externalSourceReference, String externalMessageId,
                                                  DriverEntity driver, CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
                                                  OffsetDateTime dropOffStart, OffsetDateTime dropOffEnd,
                                                  OffsetDateTime pickupStart, OffsetDateTime pickupEnd,
                                                  String notes, String actor) {
-        return createEntity(source, externalSourceReference, externalMessageId, driver, customer, null, null, quantities,
+        return createEntity(site, source, externalSourceReference, externalMessageId, driver, customer, null, null, quantities,
                 dropOffStart, dropOffEnd, pickupStart, pickupEnd, notes, actor);
     }
 
-    private WheelIntakeRequestEntity createEntity(RequestSource source, String externalSourceReference, String externalMessageId,
+    private WheelIntakeRequestEntity createEntity(ProductionSiteEntity site, RequestSource source, String externalSourceReference, String externalMessageId,
                                                  DriverEntity driver, CustomerReferenceEntity customer,
                                                  CustomerRegistrationRequestEntity pendingCustomer, String customerNameSnapshot,
                                                  Map<WheelType, Integer> quantities,
@@ -443,7 +597,9 @@ public class WheelIntakeRequestService {
         if (customer == null && pendingCustomer == null) {
             throw new InvalidRequestException("Customer is required.");
         }
+        requireCustomerSite(site, customer, pendingCustomer);
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
+        entity.setProductionSite(site);
         entity.setRequestCode(publicCodes.newRequestCode());
         entity.setSource(source);
         entity.setExternalSourceReference(externalSourceReference);
@@ -480,7 +636,7 @@ public class WheelIntakeRequestService {
     private void applyUpdate(WheelIntakeRequestEntity entity, RequestUpdateRequest update, boolean admin, String actor) {
         requireVersion(entity, update.version());
         if (update.customerId() != null) {
-            CustomerReferenceEntity customer = requireCustomer(update.customerId());
+            CustomerReferenceEntity customer = requireCustomer(entity.getProductionSite().getCode(), update.customerId());
             entity.setCustomer(customer);
             entity.setCustomerRegistrationRequest(null);
             entity.setCustomerExternalId(customer.getExternalId());
@@ -516,12 +672,59 @@ public class WheelIntakeRequestService {
                 .orElseThrow(() -> new EntityNotFoundException("Customer was not found."));
     }
 
+    private CustomerReferenceEntity requireCustomer(ProductionSiteCode siteCode, UUID id) {
+        return customers.findByIdForSite(siteCode, id).filter(CustomerReferenceEntity::isActive)
+                .orElseThrow(() -> new EntityNotFoundException("Customer was not found."));
+    }
+
     private WheelIntakeRequestEntity requireRequest(UUID id) {
         return requests.findById(id).orElseThrow(() -> new EntityNotFoundException("Request was not found."));
     }
 
+    private WheelIntakeRequestEntity requireRequest(ProductionSiteCode siteCode, UUID id) {
+        return requests.findByIdForSite(siteCode, id).orElseThrow(() -> new EntityNotFoundException("Request was not found."));
+    }
+
+    private ProductionSiteEntity requireSiteFromCustomer(CustomerReferenceEntity customer) {
+        if (customer == null || customer.getProductionSite() == null) {
+            return productionSites.portugal();
+        }
+        return customer.getProductionSite();
+    }
+
+    private ProductionSiteEntity requireSiteFromCustomerOrPending(CustomerReferenceEntity customer,
+                                                                 CustomerRegistrationRequestEntity pendingCustomer) {
+        if (customer != null) {
+            return requireSiteFromCustomer(customer);
+        }
+        if (pendingCustomer != null && pendingCustomer.getProductionSite() != null) {
+            return pendingCustomer.getProductionSite();
+        }
+        return productionSites.portugal();
+    }
+
+    private void requireCustomerSite(ProductionSiteEntity site, CustomerReferenceEntity customer,
+                                     CustomerRegistrationRequestEntity pendingCustomer) {
+        if (customer != null && !customer.getProductionSite().getId().equals(site.getId())) {
+            throw new InvalidRequestException("REQUEST_CUSTOMER_SITE_MISMATCH",
+                    "O cliente não pertence à unidade de produção selecionada.");
+        }
+        if (pendingCustomer != null && pendingCustomer.getProductionSite() != null
+                && !pendingCustomer.getProductionSite().getId().equals(site.getId())) {
+            throw new InvalidRequestException("REQUEST_CUSTOMER_SITE_MISMATCH",
+                    "O pedido de cliente não pertence à unidade de produção selecionada.");
+        }
+    }
+
+    private void requireDriverSite(DriverEntity driver, ProductionSiteEntity site) {
+        if (!productionSites.driverHasAccess(driver, site)) {
+            throw new InvalidRequestException("DRIVER_SITE_MISMATCH",
+                    "O motorista não está associado à unidade de produção selecionada.");
+        }
+    }
+
     private void requireDriverOwnership(WheelIntakeRequestEntity entity, UUID driverId) {
-        if (!entity.getDriver().getId().equals(driverId)) {
+        if (entity.getDriver() == null || !entity.getDriver().getId().equals(driverId)) {
             throw new ForbiddenOperationException("Drivers can only access their own requests.");
         }
     }

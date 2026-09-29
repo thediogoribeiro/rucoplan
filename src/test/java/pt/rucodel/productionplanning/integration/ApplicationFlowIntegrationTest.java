@@ -12,8 +12,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import pt.rucodel.productionplanning.domain.UserRole;
+import pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -44,11 +47,15 @@ class ApplicationFlowIntegrationTest {
     @Autowired PlanningAuditEventRepository audit;
     @Autowired WhatsAppIngestionItemRepository ingestionItems;
     @Autowired DailyProductionSettingsRepository settings;
+    @Autowired ApplicationUserSiteRepository userSites;
+    @Autowired DriverProductionSiteRepository driverSites;
+    @Autowired ProductionSiteService productionSites;
 
     private DriverEntity driverOne;
     private DriverEntity driverTwo;
     private CustomerReferenceEntity customerOne;
     private CustomerReferenceEntity customerTwo;
+    private ProductionSiteEntity portugal;
     private LocalDate date;
 
     @BeforeEach
@@ -59,19 +66,27 @@ class ApplicationFlowIntegrationTest {
         audit.deleteAll();
         ingestionItems.deleteAll();
         requests.deleteAll();
+        userSites.deleteAll();
         users.deleteAll();
         customers.deleteAll();
         settings.deleteAll();
+        driverSites.deleteAll();
         drivers.deleteAll();
 
         date = LocalDate.of(2026, 9, 2);
+        portugal = productionSites.requireByCode(ProductionSiteCode.PT);
         driverOne = drivers.save(driver("D001", "João Martins"));
         driverTwo = drivers.save(driver("D002", "Marta Silva"));
+        productionSites.ensureDriverAssociation(driverOne, portugal, DriverProductionSiteAssociationSource.ADMIN, "TEST");
+        productionSites.ensureDriverAssociation(driverTwo, portugal, DriverProductionSiteAssociationSource.ADMIN, "TEST");
         customerOne = customers.save(customer("C1001", "Oficina Central Braga"));
         customerTwo = customers.save(customer("C1002", "Auto Reparadora Norte"));
-        users.save(user("admin", "Administrador", UserRole.ADMIN, null));
-        users.save(user("driver1", "João Martins", UserRole.DRIVER, driverOne));
-        users.save(user("driver2", "Marta Silva", UserRole.DRIVER, driverTwo));
+        ApplicationUserEntity admin = users.save(user("admin", "Administrador", UserRole.ADMIN, null));
+        ApplicationUserEntity userOne = users.save(user("driver1", "João Martins", UserRole.DRIVER, driverOne));
+        ApplicationUserEntity userTwo = users.save(user("driver2", "Marta Silva", UserRole.DRIVER, driverTwo));
+        productionSites.ensureUserAssociation(admin, portugal, "TEST");
+        productionSites.ensureUserAssociation(userOne, portugal, "TEST");
+        productionSites.ensureUserAssociation(userTwo, portugal, "TEST");
         settings.save(settings(date, 12, 8));
     }
 
@@ -499,7 +514,7 @@ class ApplicationFlowIntegrationTest {
         String response = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"username":"%s","password":"password"}
+                                {"username":"%s","password":"password","productionSite":"PT"}
                                 """.formatted(username)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
@@ -522,6 +537,7 @@ class ApplicationFlowIntegrationTest {
 
     private CustomerReferenceEntity customer(String externalId, String name) {
         CustomerReferenceEntity customer = new CustomerReferenceEntity();
+        customer.setProductionSite(portugal);
         customer.setExternalId(externalId);
         customer.setName(name);
         customer.setActive(true);

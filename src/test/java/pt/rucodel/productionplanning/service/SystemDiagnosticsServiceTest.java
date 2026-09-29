@@ -6,12 +6,15 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import pt.rucodel.productionplanning.domain.LifecycleStatus;
 import pt.rucodel.productionplanning.domain.ProductionPlanStatus;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.dto.SystemDiagnosticsResponse;
 import pt.rucodel.productionplanning.entity.ProductionTargetConfigurationEntity;
 import pt.rucodel.productionplanning.repository.PlanningRunRepository;
 import pt.rucodel.productionplanning.repository.ProductionPlanItemRepository;
 import pt.rucodel.productionplanning.repository.ProductionPlanRepository;
 import pt.rucodel.productionplanning.repository.WheelIntakeRequestRepository;
+import pt.rucodel.productionplanning.repository.WhatsAppIngestionItemRepository;
+import pt.rucodel.productionplanning.whatsapp.WhatsAppProperties;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -33,6 +36,7 @@ class SystemDiagnosticsServiceTest {
         ProductionPlanItemRepository planItems = mock(ProductionPlanItemRepository.class);
         PlanningRunRepository planningRuns = mock(PlanningRunRepository.class);
         ProductionTargetService targetService = mock(ProductionTargetService.class);
+        WhatsAppIngestionItemRepository whatsappMessages = mock(WhatsAppIngestionItemRepository.class);
         Environment environment = mock(Environment.class);
         Clock clock = Clock.fixed(Instant.parse("2026-09-24T08:00:00Z"), ZoneId.of("Europe/Lisbon"));
 
@@ -47,13 +51,13 @@ class SystemDiagnosticsServiceTest {
                 "UP", "SSE", "/api/v1/admin/dashboard/stream",
                 null, null, null, 0, null, null, null, null, "UNKNOWN", null, 0
         ));
-        when(requests.countByLifecycleStatus(LifecycleStatus.COMMUNICATED))
+        when(requests.countByLifecycleStatusForSite(ProductionSiteCode.PT, LifecycleStatus.COMMUNICATED))
                 .thenThrow(new DataAccessResourceFailureException("count failed"));
-        when(plans.countByCurrentPlanTrueAndStatusNot(ProductionPlanStatus.CLOSED)).thenReturn(2L);
-        when(planItems.count()).thenReturn(6L);
-        when(plans.findMaxCurrentPlanningDate()).thenReturn(LocalDate.of(2026, 9, 25));
-        when(planningRuns.findFirstByOrderByStartedAtDesc()).thenReturn(Optional.empty());
-        when(targetService.effectiveFor(LocalDate.of(2026, 9, 24))).thenReturn(target);
+        when(plans.countByProductionSite_CodeAndCurrentPlanTrueAndStatusNot(ProductionSiteCode.PT, ProductionPlanStatus.CLOSED)).thenReturn(2L);
+        when(planItems.countByProductionSite_Code(ProductionSiteCode.PT)).thenReturn(6L);
+        when(plans.findMaxCurrentPlanningDateForSite(ProductionSiteCode.PT)).thenReturn(LocalDate.of(2026, 9, 25));
+        when(planningRuns.findFirstByProductionSite_CodeOrderByStartedAtDesc(ProductionSiteCode.PT)).thenReturn(Optional.empty());
+        when(targetService.effectiveFor(ProductionSiteCode.PT, LocalDate.of(2026, 9, 24))).thenReturn(target);
         when(environment.getActiveProfiles()).thenReturn(new String[]{"test"});
 
         SystemDiagnosticsService service = new SystemDiagnosticsService(
@@ -64,6 +68,8 @@ class SystemDiagnosticsServiceTest {
                 planItems,
                 planningRuns,
                 targetService,
+                whatsappMessages,
+                new WhatsAppProperties(false, "", "secret", "verify", "phone", "waba", "v26.0", "https://example.test/webhook"),
                 clock,
                 new AppProperties("RucoPlan", "Europe/Lisbon"),
                 environment,
@@ -82,5 +88,7 @@ class SystemDiagnosticsServiceTest {
         assertThat(response.planning().latestPlanDate()).isEqualTo(LocalDate.of(2026, 9, 25));
         assertThat(response.planning().targetsUsed().minimumDailyTarget()).isEqualTo(150);
         assertThat(response.planning().correlationId()).isNotBlank();
+        assertThat(response.whatsapp().enabled()).isFalse();
+        assertThat(response.whatsapp().graphApiVersion()).isEqualTo("v26.0");
     }
 }

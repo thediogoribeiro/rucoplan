@@ -10,6 +10,7 @@ import pt.rucodel.productionplanning.dto.*;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.exception.EntityNotFoundException;
 import pt.rucodel.productionplanning.exception.InvalidRequestException;
+import pt.rucodel.productionplanning.mapper.ApiMapper;
 import pt.rucodel.productionplanning.repository.*;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 
@@ -36,14 +37,17 @@ public class MultiDayProductionPlanningService {
 
     private final ProductionPlanRepository plans;
     private final ProductionPlanItemRepository planItems;
+    private final ProductionPlanItemReconciliationRepository reconciliations;
     private final WheelIntakeRequestRepository requests;
     private final ProductionTargetService targetService;
     private final PlanningRunRepository planningRuns;
     private final AuditService auditService;
     private final DashboardEventPublisher dashboardEvents;
+    private final ApiMapper mapper;
     private final Clock clock;
     private final ZoneId businessZone;
     private final WheelQuantityService wheelQuantityService;
+    private final ProductionSiteService productionSites;
     private final double saturdayProductionFactor;
     private final double sundayProductionFactor;
     private final LocalTime weekdayProductionStart;
@@ -52,10 +56,12 @@ public class MultiDayProductionPlanningService {
     private final LocalTime saturdayProductionEnd;
 
     public MultiDayProductionPlanningService(ProductionPlanRepository plans, ProductionPlanItemRepository planItems,
+                                             ProductionPlanItemReconciliationRepository reconciliations,
                                              WheelIntakeRequestRepository requests, ProductionTargetService targetService,
                                              PlanningRunRepository planningRuns,
-                                             AuditService auditService, DashboardEventPublisher dashboardEvents,
+                                             AuditService auditService, DashboardEventPublisher dashboardEvents, ApiMapper mapper,
                                              Clock clock, AppProperties appProperties, WheelQuantityService wheelQuantityService,
+                                             ProductionSiteService productionSites,
                                              @Value("${app.planning.saturday-production-factor:0.5}") double saturdayProductionFactor,
                                              @Value("${app.planning.sunday-production-factor:0}") double sundayProductionFactor,
                                              @Value("${app.planning.weekday-production-start:04:00}") String weekdayProductionStart,
@@ -64,14 +70,17 @@ public class MultiDayProductionPlanningService {
                                              @Value("${app.planning.saturday-production-end:13:00}") String saturdayProductionEnd) {
         this.plans = plans;
         this.planItems = planItems;
+        this.reconciliations = reconciliations;
         this.requests = requests;
         this.targetService = targetService;
         this.planningRuns = planningRuns;
         this.auditService = auditService;
         this.dashboardEvents = dashboardEvents;
+        this.mapper = mapper;
         this.clock = clock;
         this.businessZone = ZoneId.of(appProperties.timezone());
         this.wheelQuantityService = wheelQuantityService;
+        this.productionSites = productionSites;
         this.saturdayProductionFactor = saturdayProductionFactor;
         this.sundayProductionFactor = sundayProductionFactor;
         this.weekdayProductionStart = LocalTime.parse(weekdayProductionStart);
@@ -82,55 +91,75 @@ public class MultiDayProductionPlanningService {
 
     @Transactional(readOnly = true)
     public List<DailyProductionPlanResponse> list(LocalDate from, LocalDate to) {
-        List<DailyProductionPlanResponse> response = plans.findByPlanningDateBetweenAndCurrentPlanTrueOrderByPlanningDateAsc(from, to).stream()
+        return list(ProductionSiteCode.PT, from, to);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DailyProductionPlanResponse> list(ProductionSiteCode siteCode, LocalDate from, LocalDate to) {
+        List<DailyProductionPlanResponse> response = plans.findByProductionSite_CodeAndPlanningDateBetweenAndCurrentPlanTrueOrderByPlanningDateAsc(siteCode, from, to).stream()
                 .filter(plan -> isProductionDay(plan.getPlanningDate()) || plan.getStatus() == ProductionPlanStatus.CLOSED)
-                .map(plan -> toResponse(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId())))
+                .map(plan -> toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId())))
                 .toList();
-        LOGGER.info("Production plans queried from={} to={} plans={} items={}",
-                from, to, response.size(), response.stream().mapToInt(plan -> plan.lines().size()).sum());
+        LOGGER.info("Production plans queried site={} from={} to={} plans={} items={}",
+                siteCode, from, to, response.size(), response.stream().mapToInt(plan -> plan.lines().size()).sum());
         return response;
     }
 
     @Transactional(readOnly = true)
     public DailyProductionPlanResponse getOrGenerate(LocalDate date) {
+        return getOrGenerate(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse getOrGenerate(ProductionSiteCode siteCode, LocalDate date) {
         if (!isProductionDay(date)) {
             return nonProductionDayResponse(date);
         }
-        return plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(date)
-                .map(plan -> toResponse(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId())))
+        return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
+                .map(plan -> toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId())))
                 .orElseGet(() -> emptyProductionDayResponse(date));
     }
 
     @Transactional(readOnly = true)
     public boolean needsInitialPlanning(LocalDate from) {
-        return (requests.countByLifecycleStatus(LifecycleStatus.COMMUNICATED) > 0
-                || requests.countByLifecycleStatus(LifecycleStatus.AT_FACTORY) > 0
-                || requests.countByLifecycleStatus(LifecycleStatus.IN_PRODUCTION) > 0)
-                && plans.countByCurrentPlanTrueAndStatusNot(ProductionPlanStatus.CLOSED) == 0;
+        return needsInitialPlanning(ProductionSiteCode.PT, from);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean needsInitialPlanning(ProductionSiteCode siteCode, LocalDate from) {
+        return (requests.countByLifecycleStatusForSite(siteCode, LifecycleStatus.COMMUNICATED) > 0
+                || requests.countByLifecycleStatusForSite(siteCode, LifecycleStatus.AT_FACTORY) > 0
+                || requests.countByLifecycleStatusForSite(siteCode, LifecycleStatus.IN_PRODUCTION) > 0)
+                && plans.countByProductionSite_CodeAndCurrentPlanTrueAndStatusNot(siteCode, ProductionPlanStatus.CLOSED) == 0;
     }
 
     @Transactional
     public DailyProductionPlanResponse recalculate(LocalDate from, GenerationTrigger trigger, AuthenticatedUser user) {
-        return recalculate(from, trigger, user.actorLabel());
+        return recalculate(user.productionSiteCode(), from, trigger, user.actorLabel());
     }
 
     @Transactional
     public DailyProductionPlanResponse recalculate(LocalDate from, GenerationTrigger trigger, String actor) {
-        if (trigger == GenerationTrigger.MANUAL && plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(from)
+        return recalculate(ProductionSiteCode.PT, from, trigger, actor);
+    }
+
+    @Transactional
+    public DailyProductionPlanResponse recalculate(ProductionSiteCode siteCode, LocalDate from, GenerationTrigger trigger, String actor) {
+        if (trigger == GenerationTrigger.MANUAL && plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, from)
                 .filter(plan -> plan.getStatus() == ProductionPlanStatus.CLOSED)
                 .isPresent()) {
             throw new InvalidRequestException("PRODUCTION_PLAN_CLOSED",
                     "O plano de " + from + " já está fechado e não pode ser regenerado.");
         }
-        LocalDate to = planningHorizon(from);
-        PlanningRunEntity run = startRun(from, to, trigger, actor);
+        LocalDate to = planningHorizon(siteCode, from);
+        PlanningRunEntity run = startRun(siteCode, from, to, trigger, actor);
         try {
-            generateRange(from, to, trigger, actor);
+            generateRange(siteCode, from, to, trigger, actor);
             run.setStatus(PlanningRunStatus.COMPLETED);
             run.setFinishedAt(OffsetDateTime.now(clock));
             run.setSummary("Planos recalculados de " + from + " a " + to + ".");
             planningRuns.save(run);
-            return isProductionDay(from) ? getExisting(from) : nonProductionDayResponse(from);
+            return isProductionDay(from) ? getExisting(siteCode, from) : nonProductionDayResponse(from);
         } catch (RuntimeException ex) {
             run.setStatus(PlanningRunStatus.FAILED);
             run.setFinishedAt(OffsetDateTime.now(clock));
@@ -142,12 +171,59 @@ public class MultiDayProductionPlanningService {
 
     @Transactional(readOnly = true)
     public DailyProductionPlanResponse reconciliation(LocalDate date) {
-        return getExisting(date);
+        return reconciliation(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse reconciliation(ProductionSiteCode siteCode, LocalDate date) {
+        return getExisting(siteCode, date);
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse openReconciliation(LocalDate date) {
+        return openReconciliation(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse openReconciliation(ProductionSiteCode siteCode, LocalDate date) {
+        ProductionPlanEntity plan = currentPlan(siteCode, date);
+        return toResponse(plan, planItems.findOpenByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()));
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse closedReconciliation(LocalDate date) {
+        return closedReconciliation(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse closedReconciliation(ProductionSiteCode siteCode, LocalDate date) {
+        ProductionPlanEntity plan = currentPlan(siteCode, date);
+        return toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()).stream()
+                .filter(this::isClosedLine)
+                .toList());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RequestResponse> requestsForProductionDate(LocalDate productionDate, int page, int size) {
+        return requestsForProductionDate(ProductionSiteCode.PT, productionDate, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RequestResponse> requestsForProductionDate(ProductionSiteCode siteCode, LocalDate productionDate, int page, int size) {
+        List<RequestResponse> all = planItems.findCurrentByProductionDateForSite(siteCode, productionDate).stream()
+                .map(item -> mapper.toRequest(item.getRequest(), item))
+                .toList();
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), 200);
+        int from = Math.min(safePage * safeSize, all.size());
+        int to = Math.min(from + safeSize, all.size());
+        int totalPages = all.isEmpty() ? 0 : (int) Math.ceil((double) all.size() / safeSize);
+        return new PageResponse<>(all.subList(from, to), safePage, safeSize, all.size(), totalPages);
     }
 
     @Transactional
     public DailyProductionPlanResponse saveReconciliation(LocalDate date, ReconciliationRequest request, AuthenticatedUser user) {
-        ProductionPlanEntity plan = currentPlan(date);
+        ProductionPlanEntity plan = currentPlan(user.productionSiteCode(), date);
         requireNotClosed(plan);
         requireVersion(plan, request.planVersion());
         applyReconciliation(plan, request);
@@ -155,64 +231,49 @@ public class MultiDayProductionPlanningService {
         ProductionPlanEntity saved = plans.saveAndFlush(plan);
         auditService.record(saved.getId(), null, "SHIFT_RECONCILIATION_SAVED", user.actorLabel(),
                 "Reconciliation draft saved for " + date + ".");
-        return toResponse(saved, planItems.findByPlanIdOrderByPriorityScoreAsc(saved.getId()));
+        return toResponse(saved, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(user.productionSiteCode(), saved.getId()));
     }
 
     @Transactional
     public DailyProductionPlanResponse close(LocalDate date, ReconciliationRequest request, AuthenticatedUser user) {
-        ProductionPlanEntity plan = currentPlan(date);
+        ProductionPlanEntity plan = currentPlan(user.productionSiteCode(), date);
         if (plan.getStatus() == ProductionPlanStatus.CLOSED) {
-            return toResponse(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId()));
+            return toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(user.productionSiteCode(), plan.getId()));
         }
         requireVersion(plan, request.planVersion());
-        applyReconciliation(plan, request);
-        List<ProductionPlanItemEntity> lines = planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId());
-        if (lines.stream().anyMatch(line -> line.getCompletedQuantity() + line.getRemainingQuantity() != line.getQuantity())) {
-            throw new InvalidRequestException("Fecho inconsistente: cada linha tem de validar planeado = concluído + pendente.");
+        if (request.lines() == null || request.lines().isEmpty()) {
+            throw new InvalidRequestException("É obrigatório validar todas as linhas do plano.");
         }
-        Map<UUID, Map<WheelType, Integer>> completedByRequest = new LinkedHashMap<>();
+        Map<UUID, ReconciliationLineRequest> byLine = request.lines().stream()
+                .collect(Collectors.toMap(ReconciliationLineRequest::lineId, Function.identity()));
+        List<ProductionPlanItemEntity> lines = planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(user.productionSiteCode(), plan.getId());
+        if (byLine.size() != lines.size()) {
+            throw new InvalidRequestException("É obrigatório validar todas as linhas do plano.");
+        }
         for (ProductionPlanItemEntity line : lines) {
-            if (line.getRequest().getLifecycleStatus() == LifecycleStatus.COMMUNICATED && line.getCompletedQuantity() > 0) {
-                throw new InvalidRequestException("Pedido comunicado não pode ser concluído no fecho sem confirmação de chegada à fábrica.");
+            ReconciliationLineRequest update = byLine.get(line.getId());
+            if (update == null) {
+                throw new InvalidRequestException("É obrigatório validar todas as linhas do plano.");
             }
-            Map<WheelType, Integer> byType = completedByRequest.computeIfAbsent(line.getRequest().getId(), ignored -> wheelQuantityService.empty());
-            for (ProductionPlanItemWheelQuantityEntity quantity : line.getWheelQuantities()) {
-                byType.put(quantity.getWheelType(), byType.get(quantity.getWheelType()) + quantity.getCompletedQuantity());
-            }
+            closePlanItemInternal(date, line.getId(), update.version(), completedByType(update, line), update.operationalNotes(), user, false);
         }
-        for (Map.Entry<UUID, Map<WheelType, Integer>> entry : completedByRequest.entrySet()) {
-            WheelIntakeRequestEntity intake = requests.findById(entry.getKey())
-                    .orElseThrow(() -> new EntityNotFoundException("Request was not found."));
-            int completedThisClosure = entry.getValue().values().stream().mapToInt(Integer::intValue).sum();
-            intake.addCompletedWheelQuantities(entry.getValue());
-            if (remainingQuantity(intake) == 0 && intake.getLifecycleStatus() != LifecycleStatus.READY_FOR_PICKUP) {
-                intake.setLifecycleStatus(LifecycleStatus.READY_FOR_PICKUP);
-                auditService.record(plan.getId(), intake.getId(), "REQUEST_READY_FOR_PICKUP", user.actorLabel(),
-                        "Pedido concluído no fecho do turno.");
-            } else if (completedThisClosure > 0 && intake.getLifecycleStatus() == LifecycleStatus.AT_FACTORY) {
-                intake.setLifecycleStatus(LifecycleStatus.IN_PRODUCTION);
-                auditService.record(plan.getId(), intake.getId(), "REQUEST_IN_PRODUCTION", user.actorLabel(),
-                        "Pedido parcialmente produzido no fecho do turno.");
-            }
-            intake.setUpdatedBy(user.actorLabel());
-            requests.save(intake);
-        }
-        plan.setStatus(ProductionPlanStatus.CLOSED);
-        plan.setClosedAt(OffsetDateTime.now(clock));
-        plan.setClosedBy(user.actorLabel());
-        plan.setTotalCompleted(lines.stream().mapToInt(ProductionPlanItemEntity::getCompletedQuantity).sum());
-        plan.setTotalRemaining(lines.stream().mapToInt(ProductionPlanItemEntity::getRemainingQuantity).sum());
+        plan = currentPlan(user.productionSiteCode(), date);
+        updatePlanTotalsAndStatus(plan, user.actorLabel());
         ProductionPlanEntity saved = plans.saveAndFlush(plan);
-        auditService.record(saved.getId(), null, "SHIFT_CLOSED", user.actorLabel(),
-                "Shift closed for " + date + ". Completed " + saved.getTotalCompleted() + ", remaining " + saved.getTotalRemaining() + ".");
-        LocalDate next = date.plusDays(1);
-        generateRange(next, planningHorizon(next), GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
-        return toResponse(saved, lines);
+        generateRange(user.productionSiteCode(), date.plusDays(1), planningHorizon(user.productionSiteCode(), date.plusDays(1)), GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
+        dashboardEvents.publishPlanUpdated(user.productionSiteCode(), date);
+        return toResponse(saved, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(user.productionSiteCode(), saved.getId()));
+    }
+
+    @Transactional
+    public DailyProductionPlanResponse closeItem(LocalDate date, UUID itemId, PlanItemCloseRequest request, AuthenticatedUser user) {
+        closePlanItemInternal(date, itemId, request.version(), completedByType(request), request.operationalNotes(), user, true);
+        return getExisting(user.productionSiteCode(), date);
     }
 
     @Transactional
     public DailyProductionPlanResponse reopen(LocalDate date, ReopenPlanRequest request, AuthenticatedUser user) {
-        ProductionPlanEntity plan = currentPlan(date);
+        ProductionPlanEntity plan = currentPlan(user.productionSiteCode(), date);
         requireVersion(plan, request.planVersion());
         if (request.reason() == null || request.reason().isBlank()) {
             throw new InvalidRequestException("É obrigatório indicar o motivo da reabertura.");
@@ -225,12 +286,320 @@ public class MultiDayProductionPlanningService {
         plan.setReopenedBy(user.actorLabel());
         plan.setReopenReason(request.reason().trim());
         auditService.record(plan.getId(), null, "SHIFT_REOPENED", user.actorLabel(), request.reason().trim());
-        generateRange(date.plusDays(1), planningHorizon(date.plusDays(1)), GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
-        return toResponse(plans.saveAndFlush(plan), planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId()));
+        generateRange(user.productionSiteCode(), date.plusDays(1), planningHorizon(user.productionSiteCode(), date.plusDays(1)), GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
+        return toResponse(plans.saveAndFlush(plan), planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(user.productionSiteCode(), plan.getId()));
+    }
+
+    @Transactional
+    public DailyProductionPlanResponse reopenItem(LocalDate date, UUID itemId, PlanItemReopenRequest request, AuthenticatedUser user) {
+        if (user.role() != UserRole.ADMIN) {
+            throw new InvalidRequestException("FORBIDDEN_OPERATION", "Apenas administradores podem reabrir fechos.");
+        }
+        if (request.reason() == null || request.reason().isBlank()) {
+            throw new InvalidRequestException("É obrigatório indicar o motivo da reabertura.");
+        }
+        ProductionPlanItemEntity line = requirePlanItem(user.productionSiteCode(), date, itemId);
+        if (line.getVersion() != request.version()) {
+            throw new InvalidRequestException("OPTIMISTIC_LOCK", "A linha do plano foi alterada por outro utilizador.");
+        }
+        if (line.getLineStatus() == ProductionPlanLineStatus.REOPENED || line.getLineStatus() == ProductionPlanLineStatus.OPEN) {
+            return getExisting(user.productionSiteCode(), date);
+        }
+        ProductionPlanItemReconciliationEntity active = reconciliations
+                .findFirstByProductionSite_CodeAndProductionPlanItemIdAndRevertedFalseOrderByRevisionDesc(user.productionSiteCode(), itemId)
+                .orElseThrow(() -> new InvalidRequestException("PLAN_ITEM_RECONCILIATION_NOT_FOUND",
+                        "Não existe fecho ativo para reabrir nesta linha."));
+        if (!reconciliations.findActiveLaterReconciliationsForSite(user.productionSiteCode(), line.getRequest().getId(), date).isEmpty()) {
+            throw new InvalidRequestException("PLAN_ITEM_REOPEN_BLOCKED_BY_LATER_CLOSURE",
+                    "Este fecho possui trabalho associado já concluído num dia posterior. Reabra primeiro os fechos posteriores relacionados.");
+        }
+
+        WheelIntakeRequestEntity intake = line.getRequest();
+        intake.subtractCompletedWheelQuantities(reconciliationCompletedByType(active));
+        refreshRequestStatusAfterReconciliation(intake, 0, line.getPlan().getId(), user, "PLAN_ITEM_REOPENED");
+        requests.save(intake);
+
+        active.setReverted(true);
+        active.setStatus(ProductionPlanItemReconciliationStatus.REOPENED);
+        active.setReopenedAt(OffsetDateTime.now(clock));
+        active.setReopenedBy(user.actorLabel());
+        active.setReopenReason(request.reason().trim());
+        active.setUpdatedBy(user.actorLabel());
+        reconciliations.save(active);
+
+        line.applyWheelQuantityReconciliation(wheelQuantityService.empty(), line.plannedWheelQuantityMap());
+        line.setLineStatus(ProductionPlanLineStatus.REOPENED);
+        line.setClosedAt(null);
+        line.setClosedBy(null);
+        line.setReopenedAt(OffsetDateTime.now(clock));
+        line.setReopenedBy(user.actorLabel());
+        line.setOperationalNotes(null);
+        planItems.save(line);
+
+        ProductionPlanEntity plan = line.getPlan();
+        plan.setStatus(ProductionPlanStatus.AWAITING_RECONCILIATION);
+        plan.setClosedAt(null);
+        plan.setClosedBy(null);
+        updatePlanTotalsAndStatus(plan, user.actorLabel());
+        plans.saveAndFlush(plan);
+        auditService.record(plan.getId(), intake.getId(), "PLAN_ITEM_REOPENED", user.actorLabel(), request.reason().trim());
+        auditService.record(plan.getId(), intake.getId(), "CARRY_OVER_REVERSED", user.actorLabel(),
+                "Reopened plan item " + line.getId() + ".");
+        generateRange(user.productionSiteCode(), date.plusDays(1), planningHorizon(user.productionSiteCode(), date.plusDays(1)), GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
+        dashboardEvents.publishPlanUpdated(user.productionSiteCode(), date);
+        return getExisting(user.productionSiteCode(), date);
+    }
+
+    private void closePlanItemInternal(LocalDate date, UUID itemId, Long version, Map<WheelType, Integer> completedByType,
+                                       String operationalNotes, AuthenticatedUser user, boolean recalculateFuture) {
+        ProductionPlanItemEntity line = requirePlanItem(user.productionSiteCode(), date, itemId);
+        if (isClosedLine(line)) {
+            return;
+        }
+        if (line.getPlan().getStatus() == ProductionPlanStatus.CLOSED) {
+            throw new InvalidRequestException("PRODUCTION_PLAN_CLOSED",
+                    "O plano de " + date + " já está fechado e não pode ser alterado.");
+        }
+        if (version == null || line.getVersion() != version) {
+            throw new InvalidRequestException("OPTIMISTIC_LOCK", "A linha do plano foi alterada por outro utilizador.");
+        }
+        Map<WheelType, Integer> remainingByType = validateAndRemainingByType(line, completedByType);
+        int completedTotal = total(completedByType);
+        int remainingTotal = total(remainingByType);
+        if (completedTotal <= 0) {
+            throw new InvalidRequestException("PLAN_ITEM_NO_COMPLETED_QUANTITY",
+                    "Indique pelo menos uma jante concluída antes de fechar o trabalho no turno.");
+        }
+        if (line.getRequest().getLifecycleStatus() == LifecycleStatus.COMMUNICATED && completedTotal > 0) {
+            throw new InvalidRequestException("REQUEST_NOT_AT_FACTORY",
+                    "Pedido comunicado não pode ser concluído no fecho sem confirmação de chegada à fábrica.");
+        }
+
+        line.applyWheelQuantityReconciliation(completedByType, remainingByType);
+        line.setOperationalNotes(blankToNull(operationalNotes));
+        line.setLineStatus(remainingTotal == 0
+                ? ProductionPlanLineStatus.CLOSED_COMPLETE
+                : ProductionPlanLineStatus.CLOSED_PARTIAL);
+        line.setClosedAt(OffsetDateTime.now(clock));
+        line.setClosedBy(user.actorLabel());
+        line.setReopenedAt(null);
+        line.setReopenedBy(null);
+        planItems.save(line);
+
+        WheelIntakeRequestEntity intake = line.getRequest();
+        intake.addCompletedWheelQuantities(completedByType);
+        refreshRequestStatusAfterReconciliation(intake, completedTotal, line.getPlan().getId(), user,
+                remainingTotal == 0 ? "PLAN_ITEM_CLOSED_COMPLETE" : "PLAN_ITEM_CLOSED_PARTIAL");
+        requests.save(intake);
+
+        ProductionPlanItemReconciliationEntity reconciliation = new ProductionPlanItemReconciliationEntity();
+        reconciliation.setProductionSite(line.getProductionSite());
+        reconciliation.setProductionPlan(line.getPlan());
+        reconciliation.setProductionPlanItem(line);
+        reconciliation.setRequest(intake);
+        reconciliation.setPlanningDate(date);
+        reconciliation.setStatus(remainingTotal == 0
+                ? ProductionPlanItemReconciliationStatus.CLOSED_COMPLETE
+                : ProductionPlanItemReconciliationStatus.CLOSED_PARTIAL);
+        reconciliation.setRevision(reconciliations.findMaxRevisionForSite(user.productionSiteCode(), line.getId()) + 1);
+        reconciliation.setClosedAt(line.getClosedAt());
+        reconciliation.setClosedBy(user.actorLabel());
+        reconciliation.setCreatedBy(user.actorLabel());
+        reconciliation.setUpdatedBy(user.actorLabel());
+        for (ProductionPlanItemWheelQuantityEntity quantity : line.getWheelQuantities()) {
+            ProductionPlanItemReconciliationQuantityEntity item = new ProductionPlanItemReconciliationQuantityEntity();
+            item.setReconciliation(reconciliation);
+            item.setWheelType(quantity.getWheelType());
+            item.setPlannedQuantity(quantity.getPlannedQuantity());
+            item.setCompletedQuantity(quantity.getCompletedQuantity());
+            item.setRemainingQuantity(quantity.getRemainingQuantity());
+            item.setCreatedBy(user.actorLabel());
+            item.setUpdatedBy(user.actorLabel());
+            reconciliation.getQuantities().add(item);
+        }
+        reconciliations.save(reconciliation);
+
+        ProductionPlanEntity plan = line.getPlan();
+        updatePlanTotalsAndStatus(plan, user.actorLabel());
+        plans.saveAndFlush(plan);
+        auditService.record(plan.getId(), intake.getId(), line.getLineStatus() == ProductionPlanLineStatus.CLOSED_COMPLETE
+                        ? "PLAN_ITEM_CLOSED_COMPLETE"
+                        : "PLAN_ITEM_CLOSED_PARTIAL",
+                user.actorLabel(),
+                "Closed plan item " + line.getId() + ". Completed " + completedTotal + ", pending " + remainingTotal + ".");
+        if (remainingTotal > 0) {
+            auditService.record(plan.getId(), intake.getId(), "CARRY_OVER_CREATED", user.actorLabel(),
+                    "Pending " + remainingTotal + " wheels carried to the next eligible production day.");
+        }
+        if (recalculateFuture) {
+            generateRange(user.productionSiteCode(), date.plusDays(1), planningHorizon(user.productionSiteCode(), date.plusDays(1)), GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM");
+            dashboardEvents.publishPlanUpdated(user.productionSiteCode(), date);
+        }
+    }
+
+    private ProductionPlanItemEntity requirePlanItem(LocalDate date, UUID itemId) {
+        return requirePlanItem(ProductionSiteCode.PT, date, itemId);
+    }
+
+    private ProductionPlanItemEntity requirePlanItem(ProductionSiteCode siteCode, LocalDate date, UUID itemId) {
+        ProductionPlanItemEntity line = planItems.findById(itemId)
+                .orElseThrow(() -> new EntityNotFoundException("Production plan item was not found."));
+        if (!line.getPlan().getPlanningDate().equals(date)
+                || !line.getPlan().isCurrentPlan()
+                || line.getProductionSite() == null
+                || line.getProductionSite().getCode() != siteCode) {
+            throw new EntityNotFoundException("Production plan item was not found for the selected date.");
+        }
+        return line;
+    }
+
+    private Map<WheelType, Integer> completedByType(PlanItemCloseRequest request) {
+        if (request.wheelQuantities() == null || request.wheelQuantities().isEmpty()) {
+            throw new InvalidRequestException("É obrigatório indicar as quantidades concluídas por tipo.");
+        }
+        Map<WheelType, Integer> completedByType = wheelQuantityService.empty();
+        Set<WheelType> seen = new HashSet<>();
+        for (PlanItemCloseWheelQuantityRequest quantity : request.wheelQuantities()) {
+            if (quantity == null || quantity.type() == null || quantity.completedQuantity() == null) {
+                throw new InvalidRequestException("É obrigatório indicar tipo e quantidade concluída.");
+            }
+            if (!seen.add(quantity.type())) {
+                throw new InvalidRequestException("Não é permitido repetir tipos de jantes no fecho.");
+            }
+            if (quantity.completedQuantity() < 0) {
+                throw new InvalidRequestException("As quantidades do fecho não podem ser negativas.");
+            }
+            completedByType.put(quantity.type(), quantity.completedQuantity());
+        }
+        return completedByType;
+    }
+
+    private Map<WheelType, Integer> completedByType(ReconciliationLineRequest update, ProductionPlanItemEntity line) {
+        if (update.wheelQuantities() == null || update.wheelQuantities().isEmpty()) {
+            if (update.completedQuantity() == null) {
+                throw new InvalidRequestException("É obrigatório indicar as quantidades concluídas.");
+            }
+            if (update.remainingQuantity() != null && update.completedQuantity() + update.remainingQuantity() != line.getQuantity()) {
+                throw new InvalidRequestException("Fecho inconsistente: planeado tem de ser igual a concluído mais pendente.");
+            }
+            return splitAggregateCompletedByPlannedTypes(line, update.completedQuantity());
+        }
+        Map<WheelType, Integer> completedByType = wheelQuantityService.empty();
+        Set<WheelType> seen = new HashSet<>();
+        for (ReconciliationLineWheelQuantityRequest quantity : update.wheelQuantities()) {
+            if (quantity == null || quantity.type() == null || quantity.completedQuantity() == null) {
+                throw new InvalidRequestException("É obrigatório indicar tipo e concluído em cada quantidade.");
+            }
+            if (!seen.add(quantity.type())) {
+                throw new InvalidRequestException("Não é permitido repetir tipos de jantes no fecho.");
+            }
+            if (quantity.remainingQuantity() != null) {
+                int plannedForType = line.getWheelQuantities().stream()
+                        .filter(existing -> existing.getWheelType() == quantity.type())
+                        .mapToInt(ProductionPlanItemWheelQuantityEntity::getPlannedQuantity)
+                        .findFirst()
+                        .orElse(0);
+                if (quantity.completedQuantity() + quantity.remainingQuantity() != plannedForType) {
+                    throw new InvalidRequestException("Fecho inconsistente: cada tipo tem de validar planeado = concluído mais pendente.");
+                }
+            }
+            completedByType.put(quantity.type(), quantity.completedQuantity());
+        }
+        return completedByType;
+    }
+
+    private Map<WheelType, Integer> validateAndRemainingByType(ProductionPlanItemEntity line, Map<WheelType, Integer> completedByType) {
+        Map<WheelType, Integer> remainingByType = wheelQuantityService.empty();
+        for (ProductionPlanItemWheelQuantityEntity quantity : line.getWheelQuantities()) {
+            WheelType type = quantity.getWheelType();
+            int completed = completedByType.getOrDefault(type, 0);
+            if (completed < 0 || completed > quantity.getPlannedQuantity()) {
+                throw new InvalidRequestException("As quantidades não podem ser negativas nem superiores ao planeado.");
+            }
+            remainingByType.put(type, quantity.getPlannedQuantity() - completed);
+        }
+        if (total(completedByType) + total(remainingByType) != line.getQuantity()) {
+            throw new InvalidRequestException("Fecho inconsistente: planeado tem de ser igual a concluído mais pendente.");
+        }
+        return remainingByType;
+    }
+
+    private Map<WheelType, Integer> reconciliationCompletedByType(ProductionPlanItemReconciliationEntity reconciliation) {
+        Map<WheelType, Integer> result = wheelQuantityService.empty();
+        for (ProductionPlanItemReconciliationQuantityEntity quantity : reconciliation.getQuantities()) {
+            result.put(quantity.getWheelType(), quantity.getCompletedQuantity());
+        }
+        return result;
+    }
+
+    private boolean isClosedLine(ProductionPlanItemEntity line) {
+        return line.getLineStatus() == ProductionPlanLineStatus.CLOSED_COMPLETE
+                || line.getLineStatus() == ProductionPlanLineStatus.CLOSED_PARTIAL
+                || line.getLineStatus() == ProductionPlanLineStatus.COMPLETED
+                || line.getLineStatus() == ProductionPlanLineStatus.PARTIALLY_COMPLETED
+                || line.getLineStatus() == ProductionPlanLineStatus.CARRIED_OVER;
+    }
+
+    private void updatePlanTotalsAndStatus(ProductionPlanEntity plan, String actor) {
+        List<ProductionPlanItemEntity> lines = planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(plan.getProductionSite().getCode(), plan.getId());
+        plan.setTotalCompleted(lines.stream().mapToInt(ProductionPlanItemEntity::getCompletedQuantity).sum());
+        plan.setTotalRemaining(lines.stream().mapToInt(ProductionPlanItemEntity::getRemainingQuantity).sum());
+        boolean allClosed = !lines.isEmpty() && lines.stream().allMatch(this::isClosedLine);
+        if (allClosed) {
+            boolean wasClosed = plan.getStatus() == ProductionPlanStatus.CLOSED;
+            plan.setStatus(ProductionPlanStatus.CLOSED);
+            if (plan.getClosedAt() == null) {
+                plan.setClosedAt(OffsetDateTime.now(clock));
+            }
+            if (plan.getClosedBy() == null) {
+                plan.setClosedBy(actor);
+            }
+            if (!wasClosed) {
+                auditService.record(plan.getId(), null, "SHIFT_CLOSED", actor,
+                        "Shift closed. Completed " + plan.getTotalCompleted() + ", remaining " + plan.getTotalRemaining() + ".");
+            }
+        } else if (lines.stream().anyMatch(this::isClosedLine)) {
+            plan.setStatus(ProductionPlanStatus.AWAITING_RECONCILIATION);
+        }
+    }
+
+    private void refreshRequestStatusAfterReconciliation(WheelIntakeRequestEntity intake, int completedThisClosure,
+                                                         UUID planId, AuthenticatedUser user, String eventType) {
+        if (intake.getLifecycleStatus() == LifecycleStatus.CANCELLED) {
+            return;
+        }
+        LifecycleStatus previous = intake.getLifecycleStatus();
+        LifecycleStatus next;
+        if (remainingQuantity(intake) == 0) {
+            next = LifecycleStatus.READY_FOR_PICKUP;
+        } else if (intake.getCompletedWheelQuantity() > 0 || completedThisClosure > 0) {
+            next = LifecycleStatus.IN_PRODUCTION;
+        } else if (intake.getActualFactoryArrivalAt() != null) {
+            next = LifecycleStatus.AT_FACTORY;
+        } else {
+            next = LifecycleStatus.COMMUNICATED;
+        }
+        intake.setLifecycleStatus(next);
+        intake.setUpdatedBy(user.actorLabel());
+        if (previous != next) {
+            auditService.record(planId, intake.getId(), eventType, user.actorLabel(),
+                    "Request status changed from " + previous + " to " + next + ".");
+        }
+        if (next == LifecycleStatus.READY_FOR_PICKUP) {
+            auditService.record(planId, intake.getId(), "REQUEST_MARKED_READY", user.actorLabel(),
+                    "Pedido concluído no fecho do turno.");
+        } else if (previous == LifecycleStatus.READY_FOR_PICKUP && next == LifecycleStatus.IN_PRODUCTION) {
+            auditService.record(planId, intake.getId(), "REQUEST_RETURNED_TO_IN_PRODUCTION", user.actorLabel(),
+                    "Pedido voltou a produção depois da reabertura de fecho.");
+        }
     }
 
     private void generateRange(LocalDate from, LocalDate to, GenerationTrigger trigger, String actor) {
-        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanning(CLOSED_REQUEST_STATUSES).stream()
+        generateRange(ProductionSiteCode.PT, from, to, trigger, actor);
+    }
+
+    private void generateRange(ProductionSiteCode siteCode, LocalDate from, LocalDate to, GenerationTrigger trigger, String actor) {
+        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_REQUEST_STATUSES).stream()
                 .filter(request -> remainingQuantity(request) > 0)
                 .filter(request -> request.getExpectedFactoryDropOffWindowEnd() != null && request.getRequestedFactoryPickupWindowStart() != null)
                 .sorted(requestComparator())
@@ -241,24 +610,24 @@ public class MultiDayProductionPlanningService {
                 .toList();
 
         for (LocalDate date = from; !date.isAfter(to); date = date.plusDays(1)) {
-            if (plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(date)
+            if (plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
                     .filter(plan -> plan.getStatus() == ProductionPlanStatus.CLOSED)
                     .isPresent()) {
                 continue;
             }
             if (!isProductionDay(date)) {
-                plans.clearCurrentPlan(date);
+                plans.clearCurrentPlanForSite(siteCode, date);
                 auditService.record(null, null, "NON_PRODUCTION_DAY_SKIPPED", actor,
                         "Skipped non-production day " + date + ".");
-                dashboardEvents.publishPlanUpdated(date);
+                dashboardEvents.publishPlanUpdated(siteCode, date);
                 continue;
             }
-            ProductionTargetConfigurationEntity target = targetService.effectiveFor(date);
+            ProductionTargetConfigurationEntity target = targetService.effectiveFor(siteCode, date);
             EffectiveDailyTargets effectiveTargets = targetsFor(date, target);
-            boolean provisional = previousDayOpen(date);
+            boolean provisional = previousDayOpen(siteCode, date);
             List<LineAllocation> allocations = allocateDay(date, demands, effectiveTargets);
             provisional = provisional || allocations.stream().anyMatch(allocation -> allocation.request().getLifecycleStatus() == LifecycleStatus.COMMUNICATED);
-            savePlan(date, allocations, effectiveTargets, provisional, trigger, actor);
+            savePlan(siteCode, date, allocations, effectiveTargets, provisional, trigger, actor);
         }
     }
 
@@ -267,8 +636,8 @@ public class MultiDayProductionPlanningService {
         int planned = 0;
         List<PlanningDemand> eligible = eligibleDemands(date, demands);
 
-        for (PlanningDemand demand : eligible.stream().filter(demand -> effectiveDueDate(demand.deadlineAt).isBefore(date)
-                || effectiveDueDate(demand.deadlineAt).isEqual(date)).toList()) {
+        for (PlanningDemand demand : eligible.stream().filter(demand -> effectiveDueDate(demand).isBefore(date)
+                || effectiveDueDate(demand).isEqual(date)).toList()) {
             int quantity = demand.remainingQuantity;
             if (quantity > 0) {
                 addAllocation(allocations, demand, quantity, date);
@@ -296,7 +665,7 @@ public class MultiDayProductionPlanningService {
     private void addAllocation(Map<LineKey, MutableLineAllocation> allocations, PlanningDemand demand,
                                int quantity, LocalDate date) {
         LineKey key = new LineKey(demand.request.getId(), demand.deadlineAt, carriedOver(demand.request, date),
-                effectiveDueDate(demand.deadlineAt).isAfter(date));
+                effectiveDueDate(demand).isAfter(date));
         MutableLineAllocation allocation = allocations.computeIfAbsent(key, ignored -> new MutableLineAllocation(
                 demand.request,
                 wheelQuantityService.empty(),
@@ -328,7 +697,7 @@ public class MultiDayProductionPlanningService {
         return demands.stream()
                 .filter(demand -> demand.remainingQuantity > 0)
                 .filter(demand -> !communicatedArrivalMissed(demand, date))
-                .filter(demand -> availableForProductionOn(date, demand.planningAvailableAt))
+                .filter(demand -> availableForProductionOn(date, demand))
                 .sorted(demandComparator())
                 .toList();
     }
@@ -338,16 +707,24 @@ public class MultiDayProductionPlanningService {
             return false;
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
-        LocalDate today = now.atZoneSameInstant(businessZone).toLocalDate();
+        ZoneId zone = zoneFor(demand.request);
+        LocalDate today = now.atZoneSameInstant(zone).toLocalDate();
         return !date.isAfter(today) && demand.request.getExpectedFactoryDropOffWindowEnd().isBefore(now);
     }
 
     private void savePlan(LocalDate date, List<LineAllocation> allocations, EffectiveDailyTargets target,
                           boolean provisional, GenerationTrigger trigger, String actor) {
-        plans.clearCurrentPlan(date);
+        savePlan(ProductionSiteCode.PT, date, allocations, target, provisional, trigger, actor);
+    }
+
+    private void savePlan(ProductionSiteCode siteCode, LocalDate date, List<LineAllocation> allocations, EffectiveDailyTargets target,
+                          boolean provisional, GenerationTrigger trigger, String actor) {
+        ProductionSiteEntity site = productionSites.requireByCode(siteCode);
+        plans.clearCurrentPlanForSite(siteCode, date);
         ProductionPlanEntity plan = new ProductionPlanEntity();
+        plan.setProductionSite(site);
         plan.setPlanningDate(date);
-        plan.setVersionNumber(plans.findMaxVersion(date) + 1);
+        plan.setVersionNumber(plans.findMaxVersionForSite(siteCode, date) + 1);
         plan.setCurrentPlan(true);
         plan.setStatus(provisional ? ProductionPlanStatus.PROVISIONAL : ProductionPlanStatus.PUBLISHED);
         plan.setGeneratedAt(OffsetDateTime.now(clock));
@@ -385,7 +762,7 @@ public class MultiDayProductionPlanningService {
                 "Generated daily distribution for " + date + " with " + total + " wheels.");
         LOGGER.info("Production plan generated planningDate={} trigger={} totalPlanned={} lines={} minimumTarget={} maximumTarget={} overtime={}",
                 date, trigger, total, allocations.size(), target.minimumDailyTarget(), target.regularDailyCapacity(), overtime);
-        dashboardEvents.publishPlanUpdated(date);
+        dashboardEvents.publishPlanUpdated(siteCode, date);
     }
 
     private String warning(int total, EffectiveDailyTargets target, boolean provisional, List<LineAllocation> allocations) {
@@ -401,8 +778,8 @@ public class MultiDayProductionPlanningService {
                     + " jantes para um target máximo de " + target.regularDailyCapacity()
                     + ". Excesso estimado: " + (total - target.regularDailyCapacity()) + " jantes.");
         }
-        if (allocations.stream().anyMatch(allocation -> firstProductionDateForAvailability(allocation.planningAvailableAt())
-                .isAfter(effectiveDueDate(allocation.deadlineAt())))) {
+        if (allocations.stream().anyMatch(allocation -> firstProductionDateForAvailability(allocation.request(), allocation.planningAvailableAt())
+                .isAfter(effectiveDueDate(allocation.request(), allocation.deadlineAt())))) {
             warnings.add("Prazo impossível de cumprir com as datas fornecidas.");
         }
         List<LineAllocation> awaitingArrival = allocations.stream()
@@ -421,12 +798,20 @@ public class MultiDayProductionPlanningService {
     }
 
     private DailyProductionPlanResponse getExisting(LocalDate date) {
-        ProductionPlanEntity plan = currentPlan(date);
-        return toResponse(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId()));
+        return getExisting(ProductionSiteCode.PT, date);
+    }
+
+    private DailyProductionPlanResponse getExisting(ProductionSiteCode siteCode, LocalDate date) {
+        ProductionPlanEntity plan = currentPlan(siteCode, date);
+        return toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()));
     }
 
     private ProductionPlanEntity currentPlan(LocalDate date) {
-        return plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(date)
+        return currentPlan(ProductionSiteCode.PT, date);
+    }
+
+    private ProductionPlanEntity currentPlan(ProductionSiteCode siteCode, LocalDate date) {
+        return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
                 .orElseThrow(() -> new EntityNotFoundException("Production plan was not found."));
     }
 
@@ -436,7 +821,7 @@ public class MultiDayProductionPlanningService {
         }
         Map<UUID, ReconciliationLineRequest> byLine = request.lines().stream()
                 .collect(Collectors.toMap(ReconciliationLineRequest::lineId, Function.identity()));
-        List<ProductionPlanItemEntity> lines = planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId());
+        List<ProductionPlanItemEntity> lines = planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(plan.getProductionSite().getCode(), plan.getId());
         if (byLine.size() != lines.size()) {
             throw new InvalidRequestException("É obrigatório validar todas as linhas do plano.");
         }
@@ -450,9 +835,7 @@ public class MultiDayProductionPlanningService {
             }
             applyLineReconciliation(line, update);
             line.setOperationalNotes(blankToNull(update.operationalNotes()));
-            line.setLineStatus(line.getRemainingQuantity() == 0
-                    ? ProductionPlanLineStatus.COMPLETED
-                    : line.getCompletedQuantity() == 0 ? ProductionPlanLineStatus.CARRIED_OVER : ProductionPlanLineStatus.PARTIALLY_COMPLETED);
+            line.setLineStatus(ProductionPlanLineStatus.OPEN);
             planItems.save(line);
         }
         plan.setTotalCompleted(lines.stream().mapToInt(ProductionPlanItemEntity::getCompletedQuantity).sum());
@@ -529,19 +912,27 @@ public class MultiDayProductionPlanningService {
     }
 
     private boolean previousDayOpen(LocalDate date) {
-        return plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(date.minusDays(1))
+        return previousDayOpen(ProductionSiteCode.PT, date);
+    }
+
+    private boolean previousDayOpen(ProductionSiteCode siteCode, LocalDate date) {
+        return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date.minusDays(1))
                 .map(plan -> plan.getStatus() != ProductionPlanStatus.CLOSED)
                 .orElse(false);
     }
 
     private LocalDate planningHorizon(LocalDate from) {
-        LocalDate requestHorizon = requests.findOpenRequestsForPlanning(CLOSED_REQUEST_STATUSES).stream()
+        return planningHorizon(ProductionSiteCode.PT, from);
+    }
+
+    private LocalDate planningHorizon(ProductionSiteCode siteCode, LocalDate from) {
+        LocalDate requestHorizon = requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_REQUEST_STATUSES).stream()
                 .filter(request -> remainingQuantity(request) > 0)
                 .flatMap(request -> demandsFor(request).stream())
-                .map(demand -> max(effectiveDueDate(demand.deadlineAt), firstProductionDateForAvailability(demand.planningAvailableAt)))
+                .map(demand -> max(effectiveDueDate(demand), firstProductionDateForAvailability(demand.request, demand.planningAvailableAt)))
                 .max(LocalDate::compareTo)
                 .orElse(from.plusDays(1));
-        LocalDate existing = plans.findMaxCurrentPlanningDate();
+        LocalDate existing = plans.findMaxCurrentPlanningDateForSite(siteCode);
         LocalDate horizon = existing == null ? requestHorizon : max(requestHorizon, existing);
         return max(horizon, from.plusDays(1));
     }
@@ -557,7 +948,7 @@ public class MultiDayProductionPlanningService {
 
     private Comparator<PlanningDemand> demandComparator() {
         return Comparator
-                .comparing((PlanningDemand demand) -> carriedOver(demand.request, demand.planningAvailableAt.atZoneSameInstant(businessZone).toLocalDate()) ? 0 : 1)
+                .comparing((PlanningDemand demand) -> carriedOver(demand.request, demand.planningAvailableAt.atZoneSameInstant(zoneFor(demand.request)).toLocalDate()) ? 0 : 1)
                 .thenComparing(demand -> demand.deadlineAt)
                 .thenComparingInt(demand -> typePriority(demand.type))
                 .thenComparing(demand -> demand.materialAvailableAt)
@@ -571,18 +962,29 @@ public class MultiDayProductionPlanningService {
     }
 
     private boolean carriedOver(WheelIntakeRequestEntity request, LocalDate date) {
-        return !planItems.findClosedCarryOver(
+        ProductionSiteCode siteCode = request.getProductionSite() == null ? ProductionSiteCode.PT : request.getProductionSite().getCode();
+        return !planItems.findClosedCarryOverForSite(
+                siteCode,
                 request.getId(), date, ProductionPlanStatus.CLOSED
         ).isEmpty();
     }
 
     private LocalDate effectiveDueDate(WheelIntakeRequestEntity request) {
-        return effectiveDueDate(latestEffectiveDeadlineAt(request));
+        return effectiveDueDate(request, latestEffectiveDeadlineAt(request));
     }
 
     private LocalDate effectiveDueDate(OffsetDateTime due) {
-        LocalDate date = due.atZoneSameInstant(businessZone).toLocalDate();
-        LocalTime time = due.atZoneSameInstant(businessZone).toLocalTime();
+        return effectiveDueDate(null, due);
+    }
+
+    private LocalDate effectiveDueDate(PlanningDemand demand) {
+        return effectiveDueDate(demand.request, demand.deadlineAt);
+    }
+
+    private LocalDate effectiveDueDate(WheelIntakeRequestEntity request, OffsetDateTime due) {
+        ZoneId zone = zoneFor(request);
+        LocalDate date = due.atZoneSameInstant(zone).toLocalDate();
+        LocalTime time = due.atZoneSameInstant(zone).toLocalTime();
         while (date.isAfter(LocalDate.MIN.plusDays(7))) {
             Optional<ProductionWindow> window = productionWindow(date);
             if (window.isEmpty()) {
@@ -600,14 +1002,23 @@ public class MultiDayProductionPlanningService {
     }
 
     private boolean availableForProductionOn(LocalDate date, WheelIntakeRequestEntity request) {
-        return availableForProductionOn(date, availableAt(request));
+        return availableForProductionOn(date, request, availableAt(request));
     }
 
     private boolean availableForProductionOn(LocalDate date, OffsetDateTime available) {
+        return availableForProductionOn(date, null, available);
+    }
+
+    private boolean availableForProductionOn(LocalDate date, PlanningDemand demand) {
+        return availableForProductionOn(date, demand.request, demand.planningAvailableAt);
+    }
+
+    private boolean availableForProductionOn(LocalDate date, WheelIntakeRequestEntity request, OffsetDateTime available) {
         if (!isProductionDay(date)) {
             return false;
         }
-        LocalDate availableDate = available.atZoneSameInstant(businessZone).toLocalDate();
+        ZoneId zone = zoneFor(request);
+        LocalDate availableDate = available.atZoneSameInstant(zone).toLocalDate();
         if (availableDate.isBefore(date)) {
             return true;
         }
@@ -615,7 +1026,7 @@ public class MultiDayProductionPlanningService {
             return false;
         }
         return productionWindow(date)
-                .map(window -> available.atZoneSameInstant(businessZone).toLocalTime().isBefore(window.end()))
+                .map(window -> available.atZoneSameInstant(zone).toLocalTime().isBefore(window.end()))
                 .orElse(false);
     }
 
@@ -624,16 +1035,21 @@ public class MultiDayProductionPlanningService {
     }
 
     private boolean impossibleDeadline(PlanningDemand demand) {
-        return firstProductionDateForAvailability(demand.planningAvailableAt).isAfter(effectiveDueDate(demand.deadlineAt));
+        return firstProductionDateForAvailability(demand.request, demand.planningAvailableAt).isAfter(effectiveDueDate(demand));
     }
 
     private LocalDate firstProductionDateForAvailability(WheelIntakeRequestEntity request) {
-        return firstProductionDateForAvailability(availableAt(request));
+        return firstProductionDateForAvailability(request, availableAt(request));
     }
 
     private LocalDate firstProductionDateForAvailability(OffsetDateTime available) {
-        LocalDate date = available.atZoneSameInstant(businessZone).toLocalDate();
-        LocalTime time = available.atZoneSameInstant(businessZone).toLocalTime();
+        return firstProductionDateForAvailability(null, available);
+    }
+
+    private LocalDate firstProductionDateForAvailability(WheelIntakeRequestEntity request, OffsetDateTime available) {
+        ZoneId zone = zoneFor(request);
+        LocalDate date = available.atZoneSameInstant(zone).toLocalDate();
+        LocalTime time = available.atZoneSameInstant(zone).toLocalTime();
         while (date.isBefore(LocalDate.MAX.minusDays(7))) {
             Optional<ProductionWindow> window = productionWindow(date);
             if (window.isPresent() && time.isBefore(window.get().end())) {
@@ -776,20 +1192,22 @@ public class MultiDayProductionPlanningService {
             OffsetDateTime materialAvailableAt = availableAt(request);
             OffsetDateTime deadlineAt = effectiveDeadlineAt(request, type);
             String adjustmentReason = deadlineAdjustmentReason(request, type, deadlineAt);
-            OffsetDateTime planningAvailableAt = planningAvailableAt(type, materialAvailableAt, deadlineAt);
+            OffsetDateTime planningAvailableAt = planningAvailableAt(request, type, materialAvailableAt, deadlineAt);
             result.add(new PlanningDemand(request, type, materialAvailableAt, planningAvailableAt,
                     deadlineAt, adjustmentReason, quantity));
         }
         return result;
     }
 
-    private OffsetDateTime planningAvailableAt(WheelType type, OffsetDateTime materialAvailableAt, OffsetDateTime deadlineAt) {
+    private OffsetDateTime planningAvailableAt(WheelIntakeRequestEntity request, WheelType type,
+                                               OffsetDateTime materialAvailableAt, OffsetDateTime deadlineAt) {
         if (type != WheelType.BIPARTITE) {
             return materialAvailableAt;
         }
-        LocalDate date = deadlineAt.atZoneSameInstant(businessZone).toLocalDate();
+        ZoneId zone = zoneFor(request);
+        LocalDate date = deadlineAt.atZoneSameInstant(zone).toLocalDate();
         LocalTime start = productionWindow(date).map(ProductionWindow::start).orElse(LocalTime.MIN);
-        OffsetDateTime earliestBipartiteCompletionDay = date.atTime(start).atZone(businessZone).toOffsetDateTime();
+        OffsetDateTime earliestBipartiteCompletionDay = date.atTime(start).atZone(zone).toOffsetDateTime();
         return earliestBipartiteCompletionDay.isAfter(materialAvailableAt) ? earliestBipartiteCompletionDay : materialAvailableAt;
     }
 
@@ -801,7 +1219,7 @@ public class MultiDayProductionPlanningService {
     }
 
     private LocalDate latestEffectiveDueDate(WheelIntakeRequestEntity request) {
-        return effectiveDueDate(latestEffectiveDeadlineAt(request));
+        return effectiveDueDate(request, latestEffectiveDeadlineAt(request));
     }
 
     private OffsetDateTime effectiveDeadlineAt(WheelIntakeRequestEntity request, WheelType type) {
@@ -832,12 +1250,17 @@ public class MultiDayProductionPlanningService {
         if (type != WheelType.BIPARTITE || request.wheelQuantity(type) <= 0) {
             return requested;
         }
-        OffsetDateTime minimum = minimumBipartiteDeadline(availableAt(request), requested);
+        OffsetDateTime minimum = minimumBipartiteDeadline(request, availableAt(request), requested);
         return minimum.isAfter(requested) ? minimum : requested;
     }
 
     private OffsetDateTime minimumBipartiteDeadline(OffsetDateTime available, OffsetDateTime requestedDeadline) {
-        LocalDate date = available.atZoneSameInstant(businessZone).toLocalDate();
+        return minimumBipartiteDeadline(null, available, requestedDeadline);
+    }
+
+    private OffsetDateTime minimumBipartiteDeadline(WheelIntakeRequestEntity request, OffsetDateTime available, OffsetDateTime requestedDeadline) {
+        ZoneId zone = zoneFor(request);
+        LocalDate date = available.atZoneSameInstant(zone).toLocalDate();
         int remaining = BIPARTITE_MINIMUM_BUSINESS_DAYS;
         while (remaining > 0) {
             date = date.plusDays(1);
@@ -845,8 +1268,8 @@ public class MultiDayProductionPlanningService {
                 remaining--;
             }
         }
-        return date.atTime(requestedDeadline.atZoneSameInstant(businessZone).toLocalTime())
-                .atZone(businessZone)
+        return date.atTime(requestedDeadline.atZoneSameInstant(zone).toLocalTime())
+                .atZone(zone)
                 .toOffsetDateTime();
     }
 
@@ -890,7 +1313,12 @@ public class MultiDayProductionPlanningService {
     }
 
     private PlanningRunEntity startRun(LocalDate from, LocalDate to, GenerationTrigger trigger, String actor) {
+        return startRun(ProductionSiteCode.PT, from, to, trigger, actor);
+    }
+
+    private PlanningRunEntity startRun(ProductionSiteCode siteCode, LocalDate from, LocalDate to, GenerationTrigger trigger, String actor) {
         PlanningRunEntity run = new PlanningRunEntity();
+        run.setProductionSite(productionSites.requireByCode(siteCode));
         run.setTrigger(trigger);
         run.setStatus(PlanningRunStatus.STARTED);
         run.setStartedAt(OffsetDateTime.now(clock));
@@ -959,6 +1387,8 @@ public class MultiDayProductionPlanningService {
                 line.getOperationalNotes(),
                 line.isCarriedOver(),
                 line.isAdvancedFromFuture(),
+                line.getClosedAt(),
+                line.getClosedBy(),
                 line.getPriorityExplanation(),
                 line.getRiskClassification(),
                 line.getLineStatus(),
@@ -977,6 +1407,13 @@ public class MultiDayProductionPlanningService {
     private String safeSummary(String value) {
         String safe = value == null ? "Planning failed." : value;
         return safe.length() > 2000 ? safe.substring(0, 2000) : safe;
+    }
+
+    private ZoneId zoneFor(WheelIntakeRequestEntity request) {
+        if (request == null || request.getProductionSite() == null || request.getProductionSite().getTimezone() == null) {
+            return businessZone;
+        }
+        return ZoneId.of(request.getProductionSite().getTimezone());
     }
 
     private record EffectiveDailyTargets(int minimumDailyTarget, int regularDailyCapacity) {
@@ -1066,10 +1503,11 @@ public class MultiDayProductionPlanningService {
         public ProductionPlanItemEntity apply(LineAllocation allocation) {
             WheelIntakeRequestEntity request = allocation.request();
             ProductionPlanItemEntity entity = new ProductionPlanItemEntity();
+            entity.setProductionSite(plan.getProductionSite());
             entity.setPlan(plan);
             entity.setRequest(request);
             entity.setCustomerName(request.getCustomerNameSnapshot());
-            entity.setDriverName(request.getDriver().getName());
+            entity.setDriverName(request.getDriver() == null ? "Sem motorista" : request.getDriver().getName());
             entity.setQuantity(allocation.quantity());
             entity.setCompletedQuantity(0);
             entity.setRemainingQuantity(allocation.quantity());
@@ -1085,8 +1523,8 @@ public class MultiDayProductionPlanningService {
                     : request.getActualFactoryArrivalAt() == null
                     ? AvailabilityClassification.TENTATIVE
                     : AvailabilityClassification.CONFIRMED);
-            entity.setRiskClassification(firstProductionDateForAvailability(allocation.planningAvailableAt()).isAfter(effectiveDueDate(allocation.deadlineAt()))
-                    || effectiveDueDate(allocation.deadlineAt()).isBefore(plan.getPlanningDate())
+            entity.setRiskClassification(firstProductionDateForAvailability(request, allocation.planningAvailableAt()).isAfter(effectiveDueDate(request, allocation.deadlineAt()))
+                    || effectiveDueDate(request, allocation.deadlineAt()).isBefore(plan.getPlanningDate())
                     || plan.getOvertimeQuantity() > 0 ? RiskClassification.AT_RISK : RiskClassification.ON_TRACK);
             entity.setPriorityScore(BigDecimal.valueOf(priority++));
             entity.setPriorityExplanation(priorityExplanation(allocation, request));
@@ -1094,7 +1532,7 @@ public class MultiDayProductionPlanningService {
             entity.setLocked(false);
             entity.setCarriedOver(allocation.carriedOver());
             entity.setAdvancedFromFuture(allocation.advancedFromFuture());
-            entity.setLineStatus(ProductionPlanLineStatus.PLANNED);
+            entity.setLineStatus(ProductionPlanLineStatus.OPEN);
             entity.setCreatedAt(OffsetDateTime.now(clock));
             return entity;
         }
@@ -1107,13 +1545,13 @@ public class MultiDayProductionPlanningService {
             if (allocation.advancedFromFuture()) {
                 parts.add("Trabalho antecipado para equilibrar a carga e atingir targets.");
             }
-            if (firstProductionDateForAvailability(allocation.planningAvailableAt()).isAfter(effectiveDueDate(allocation.deadlineAt()))) {
+            if (firstProductionDateForAvailability(request, allocation.planningAvailableAt()).isAfter(effectiveDueDate(request, allocation.deadlineAt()))) {
                 parts.add("Prazo impossível de cumprir com as datas fornecidas.");
             }
             if (allocation.deadlineAdjustmentReason() != null) {
                 parts.add(allocation.deadlineAdjustmentReason());
             }
-            parts.add("Prazo: " + allocation.deadlineAt().atZoneSameInstant(businessZone).toLocalDate() + ".");
+            parts.add("Prazo: " + allocation.deadlineAt().atZoneSameInstant(zoneFor(request)).toLocalDate() + ".");
             return String.join(" ", parts);
         }
     }

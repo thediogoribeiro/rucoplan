@@ -3,14 +3,19 @@ package pt.rucodel.productionplanning.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
+import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.entity.CustomerReferenceEntity;
 import pt.rucodel.productionplanning.entity.DriverEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 import pt.rucodel.productionplanning.repository.CustomerReferenceRepository;
 import pt.rucodel.productionplanning.repository.DailyProductionSettingsRepository;
 import pt.rucodel.productionplanning.repository.DriverRepository;
+import pt.rucodel.productionplanning.repository.ProductionSiteRepository;
 import pt.rucodel.productionplanning.repository.RequestStatusHistoryRepository;
 import pt.rucodel.productionplanning.repository.WheelIntakeRequestRepository;
+import pt.rucodel.productionplanning.service.ProductionSiteService;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -23,6 +28,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
 
 class DevSeedDataConfigTest {
 
@@ -34,13 +40,20 @@ class DevSeedDataConfigTest {
         WheelIntakeRequestRepository requests = mock(WheelIntakeRequestRepository.class);
         RequestStatusHistoryRepository history = mock(RequestStatusHistoryRepository.class);
         DailyProductionSettingsRepository settings = mock(DailyProductionSettingsRepository.class);
+        ProductionSiteRepository productionSitesRepository = mock(ProductionSiteRepository.class);
+        ProductionSiteService productionSites = mock(ProductionSiteService.class);
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         Clock clock = Clock.fixed(Instant.parse("2026-09-24T10:00:00Z"), ZoneId.of("Europe/Lisbon"));
+        ProductionSiteEntity portugal = site();
 
         when(passwordEncoder.encode(any())).thenReturn("encoded");
-        when(users.existsByUsername(any())).thenReturn(false);
+        when(users.findByUsername(any())).thenReturn(Optional.empty());
+        when(users.save(any())).thenAnswer(invocation -> invocation.getArgument(0, ApplicationUserEntity.class));
         when(requests.existsByRequestCode(any())).thenReturn(true);
         when(settings.findBySettingsKey(any())).thenReturn(Optional.empty());
+        when(productionSitesRepository.findByCode(ProductionSiteCode.PT)).thenReturn(Optional.of(portugal));
+        doAnswer(invocation -> null).when(productionSites).ensureDriverAssociation(any(), any(), any(), any());
+        doAnswer(invocation -> null).when(productionSites).ensureUserAssociation(any(), any(), any());
 
         DriverEntity existingD1 = driver("D001", "MOTOR-001", "João Martins");
         DriverEntity existingD2 = driver("D002", "MOTOR-002", "Marta Silva");
@@ -49,10 +62,14 @@ class DevSeedDataConfigTest {
         when(drivers.findByExternalId("D002")).thenReturn(Optional.of(existingD2));
         when(drivers.findByExternalId("D003")).thenReturn(Optional.of(existingD3));
 
-        when(customers.findByExternalId("C1001")).thenReturn(Optional.of(customer("C1001", "CLI-1001", "Oficina Central Braga")));
-        when(customers.findByExternalId("C1002")).thenReturn(Optional.of(customer("C1002", "CLI-1002", "Auto Reparadora Norte")));
-        when(customers.findByExternalId("C1003")).thenReturn(Optional.of(customer("C1003", "CLI-1003", "Pneus Atlântico")));
-        when(customers.findByExternalId("C1004")).thenReturn(Optional.of(customer("C1004", "CLI-1004", "Jantes e Companhia")));
+        when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1001"))
+                .thenReturn(Optional.of(customer(portugal, "C1001", "CLI-1001", "Oficina Central Braga")));
+        when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1002"))
+                .thenReturn(Optional.of(customer(portugal, "C1002", "CLI-1002", "Auto Reparadora Norte")));
+        when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1003"))
+                .thenReturn(Optional.of(customer(portugal, "C1003", "CLI-1003", "Pneus Atlântico")));
+        when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1004"))
+                .thenReturn(Optional.of(customer(portugal, "C1004", "CLI-1004", "Jantes e Companhia")));
 
         CommandLineRunner runner = new DevSeedDataConfig().seedDevelopmentData(
                 drivers,
@@ -61,6 +78,8 @@ class DevSeedDataConfigTest {
                 requests,
                 history,
                 settings,
+                productionSitesRepository,
+                productionSites,
                 passwordEncoder,
                 clock
         );
@@ -80,8 +99,18 @@ class DevSeedDataConfigTest {
         return entity;
     }
 
-    private CustomerReferenceEntity customer(String externalId, String customerCode, String name) {
+    private ProductionSiteEntity site() {
+        ProductionSiteEntity entity = new ProductionSiteEntity();
+        entity.setCode(ProductionSiteCode.PT);
+        entity.setDisplayName("Portugal");
+        entity.setTimezone("Europe/Lisbon");
+        entity.setActive(true);
+        return entity;
+    }
+
+    private CustomerReferenceEntity customer(ProductionSiteEntity site, String externalId, String customerCode, String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(site);
         entity.setExternalId(externalId);
         entity.setCustomerCode(customerCode);
         entity.setName(name);

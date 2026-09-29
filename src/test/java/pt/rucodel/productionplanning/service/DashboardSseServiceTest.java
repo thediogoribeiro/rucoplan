@@ -6,6 +6,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import pt.rucodel.productionplanning.domain.DashboardPlanUpdatedEvent;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
@@ -46,7 +47,7 @@ class DashboardSseServiceTest {
         CountingDashboardSseService service = new CountingDashboardSseService(new CountingEmitter());
         service.subscribe();
 
-        service.onDashboardPlanUpdated(new DashboardPlanUpdatedEvent(LocalDate.of(2026, 9, 2)));
+        service.onDashboardPlanUpdated(new DashboardPlanUpdatedEvent(ProductionSiteCode.PT, LocalDate.of(2026, 9, 2)));
 
         assertThat(service.emitter.sentPayloads.getLast()).contains("production-plan-updated");
         Method method = DashboardSseService.class.getMethod("onDashboardPlanUpdated", DashboardPlanUpdatedEvent.class);

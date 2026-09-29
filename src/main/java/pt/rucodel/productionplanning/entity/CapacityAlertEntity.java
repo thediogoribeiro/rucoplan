@@ -12,6 +12,8 @@ import java.util.UUID;
 @Table(
         name = "capacity_alert",
         indexes = {
+                @Index(name = "idx_capacity_alert_site_status", columnList = "production_site_id, status"),
+                @Index(name = "idx_capacity_alert_site_date", columnList = "production_site_id, affected_date"),
                 @Index(name = "idx_capacity_alert_status", columnList = "status"),
                 @Index(name = "idx_capacity_alert_affected_date", columnList = "affected_date")
         }
@@ -20,6 +22,10 @@ public class CapacityAlertEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false, length = 40)
@@ -81,6 +87,14 @@ public class CapacityAlertEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public CapacityAlertType getType() {

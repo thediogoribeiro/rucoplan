@@ -16,6 +16,7 @@ import java.util.UUID;
 @Table(
         name = "telegram_intake_draft",
         indexes = {
+                @Index(name = "idx_telegram_draft_site_status", columnList = "production_site_id, status"),
                 @Index(name = "idx_telegram_draft_driver", columnList = "driver_id"),
                 @Index(name = "idx_telegram_draft_status", columnList = "status")
         }
@@ -24,6 +25,10 @@ public class TelegramIntakeDraftEntity extends BaseEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id")
+    private ProductionSiteEntity productionSite;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "driver_id", nullable = false)
@@ -88,6 +93,14 @@ public class TelegramIntakeDraftEntity extends BaseEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public DriverEntity getDriver() {

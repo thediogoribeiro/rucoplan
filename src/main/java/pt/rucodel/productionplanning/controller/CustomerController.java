@@ -24,22 +24,24 @@ public class CustomerController {
     @GetMapping("/api/v1/customers/search")
     public List<CustomerResponse> search(@RequestParam(defaultValue = "") String q,
                                          @RequestParam(defaultValue = "20") int limit) {
-        return customers.search(q, limit);
+        return customers.search(currentUserService.requireUser().productionSiteCode(), q, limit);
     }
 
     @GetMapping("/api/v1/admin/customers")
     public List<CustomerResponse> list() {
-        return customers.list();
+        return customers.list(currentUserService.requireUser().productionSiteCode());
     }
 
     @PostMapping("/api/v1/admin/customers")
     @ResponseStatus(HttpStatus.CREATED)
     public CustomerResponse create(@Valid @RequestBody CustomerRequest request) {
-        return customers.create(request, currentUserService.requireUser().actorLabel());
+        var user = currentUserService.requireUser();
+        return customers.create(user.productionSiteCode(), request, user.actorLabel());
     }
 
     @PatchMapping("/api/v1/admin/customers/{customerId}")
     public CustomerResponse update(@PathVariable UUID customerId, @Valid @RequestBody CustomerRequest request) {
-        return customers.update(customerId, request, currentUserService.requireUser().actorLabel());
+        var user = currentUserService.requireUser();
+        return customers.update(user.productionSiteCode(), customerId, request, user.actorLabel());
     }
 }

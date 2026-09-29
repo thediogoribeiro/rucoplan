@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.exception.InvalidRequestException;
 
 import javax.crypto.Mac;
@@ -43,7 +44,7 @@ public class TokenService {
         this.objectMapper = objectMapper;
     }
 
-    public IssuedToken issue(ApplicationUserEntity user) {
+    public IssuedToken issue(ApplicationUserEntity user, ProductionSiteEntity site) {
         OffsetDateTime expiresAt = OffsetDateTime.now(clock).plusMinutes(ttlMinutes);
         UUID driverId = user.getDriver() == null ? null : user.getDriver().getId();
         Map<String, String> payload = new LinkedHashMap<>();
@@ -52,6 +53,10 @@ public class TokenService {
         payload.put("displayName", user.getDisplayName());
         payload.put("role", user.getRole().name());
         payload.put("driverId", driverId == null ? "" : driverId.toString());
+        payload.put("productionSiteId", site.getId().toString());
+        payload.put("productionSiteCode", site.getCode().name());
+        payload.put("productionSiteName", site.getDisplayName());
+        payload.put("productionSiteTimezone", site.getTimezone());
         payload.put("exp", Long.toString(expiresAt.toEpochSecond()));
         try {
             String body = ENCODER.encodeToString(objectMapper.writeValueAsBytes(payload));
@@ -81,12 +86,20 @@ public class TokenService {
                 throw new InvalidRequestException("AUTHENTICATION_FAILED", "Authentication token has expired.");
             }
             String driverId = payload.get("driverId");
+            String productionSiteId = payload.get("productionSiteId");
+            String productionSiteCode = payload.get("productionSiteCode");
             return new TokenClaims(
                     UUID.fromString(payload.get("sub")),
                     payload.get("username"),
                     payload.get("displayName"),
                     UserRole.valueOf(payload.get("role")),
                     driverId == null || driverId.isBlank() ? null : UUID.fromString(driverId),
+                    productionSiteId == null || productionSiteId.isBlank() ? null : UUID.fromString(productionSiteId),
+                    productionSiteCode == null || productionSiteCode.isBlank()
+                            ? null
+                            : pt.rucodel.productionplanning.domain.ProductionSiteCode.valueOf(productionSiteCode),
+                    payload.get("productionSiteName"),
+                    payload.get("productionSiteTimezone"),
                     expiresAt
             );
         } catch (InvalidRequestException ex) {
