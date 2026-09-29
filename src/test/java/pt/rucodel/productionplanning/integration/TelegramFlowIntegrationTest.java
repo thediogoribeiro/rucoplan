@@ -427,6 +427,7 @@ class TelegramFlowIntegrationTest {
 
     private DailyProductionSettingsEntity settings(LocalDate date, int capacity) {
         DailyProductionSettingsEntity entity = new DailyProductionSettingsEntity();
+        entity.setProductionSite(portugal);
         entity.setSettingsKey("DATE:" + date);
         entity.setSettingsDate(date);
         entity.setDailyCapacity(capacity);

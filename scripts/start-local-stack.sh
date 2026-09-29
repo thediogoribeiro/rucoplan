@@ -79,7 +79,8 @@ ngrok_command() {
 
 start_backend() {
   maven_command
-  export SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-dev}"
+  export SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-local}"
+  export APP_ENVIRONMENT="${APP_ENVIRONMENT:-local}"
   export SERVER_PORT="${SERVER_PORT:-8082}"
 
   echo "Starting backend on http://localhost:${SERVER_PORT}/"

@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
@@ -50,26 +51,28 @@ class DevSeedDataConfigTest {
         when(users.findByUsername(any())).thenReturn(Optional.empty());
         when(users.save(any())).thenAnswer(invocation -> invocation.getArgument(0, ApplicationUserEntity.class));
         when(requests.existsByRequestCode(any())).thenReturn(true);
-        when(settings.findBySettingsKey(any())).thenReturn(Optional.empty());
+        when(settings.findByProductionSite_CodeAndSettingsKey(any(), any())).thenReturn(Optional.empty());
         when(productionSitesRepository.findByCode(ProductionSiteCode.PT)).thenReturn(Optional.of(portugal));
         doAnswer(invocation -> null).when(productionSites).ensureDriverAssociation(any(), any(), any(), any());
         doAnswer(invocation -> null).when(productionSites).ensureUserAssociation(any(), any(), any());
 
-        DriverEntity existingD1 = driver("D001", "MOTOR-001", "João Martins");
-        DriverEntity existingD2 = driver("D002", "MOTOR-002", "Marta Silva");
-        DriverEntity existingD3 = driver("D003", "MOTOR-003", "Rui Costa");
-        when(drivers.findByExternalId("D001")).thenReturn(Optional.of(existingD1));
-        when(drivers.findByExternalId("D002")).thenReturn(Optional.of(existingD2));
-        when(drivers.findByExternalId("D003")).thenReturn(Optional.of(existingD3));
+        ProductionSiteEntity luxembourg = site(ProductionSiteCode.LUX);
+        when(productionSitesRepository.findByCode(ProductionSiteCode.LUX)).thenReturn(Optional.of(luxembourg));
+        DriverEntity existing = driver("DTESTE", "MOTOR-TESTE", "teste");
+        when(drivers.findByNameIgnoreCase("teste")).thenReturn(Optional.of(existing));
 
         when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1001"))
-                .thenReturn(Optional.of(customer(portugal, "C1001", "CLI-1001", "Oficina Central Braga")));
+                .thenReturn(Optional.of(customer(portugal, "C1001", "CLI-1001", "loja de jantes de AAAA")));
         when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1002"))
-                .thenReturn(Optional.of(customer(portugal, "C1002", "CLI-1002", "Auto Reparadora Norte")));
+                .thenReturn(Optional.of(customer(portugal, "C1002", "CLI-1002", "loja de jantes de BBBB")));
         when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1003"))
-                .thenReturn(Optional.of(customer(portugal, "C1003", "CLI-1003", "Pneus Atlântico")));
+                .thenReturn(Optional.of(customer(portugal, "C1003", "CLI-1003", "loja de jantes de CCCC")));
         when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.PT, "C1004"))
-                .thenReturn(Optional.of(customer(portugal, "C1004", "CLI-1004", "Jantes e Companhia")));
+                .thenReturn(Optional.of(customer(portugal, "C1004", "CLI-1004", "loja de jantes de DDDD")));
+        when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.LUX, "L1001"))
+                .thenReturn(Optional.of(customer(luxembourg, "L1001", "CLI-1001", "loja de jantes de AAAA")));
+        when(customers.findByProductionSite_CodeAndExternalId(ProductionSiteCode.LUX, "L1002"))
+                .thenReturn(Optional.of(customer(luxembourg, "L1002", "CLI-1002", "loja de jantes de BBBB")));
 
         CommandLineRunner runner = new DevSeedDataConfig().seedDevelopmentData(
                 drivers,
@@ -86,8 +89,8 @@ class DevSeedDataConfigTest {
 
         runner.run();
 
-        verify(drivers, never()).save(argThat(driver -> "MOTOR-001".equals(driver.getDriverCode())));
-        verify(users).save(argThat(user -> "admin".equals(user.getUsername())));
+        verify(drivers, never()).save(argThat(driver -> "teste".equals(driver.getName())));
+        verify(users, atLeastOnce()).save(argThat(user -> "admin".equals(user.getUsername())));
     }
 
     private DriverEntity driver(String externalId, String driverCode, String name) {
@@ -100,10 +103,14 @@ class DevSeedDataConfigTest {
     }
 
     private ProductionSiteEntity site() {
+        return site(ProductionSiteCode.PT);
+    }
+
+    private ProductionSiteEntity site(ProductionSiteCode code) {
         ProductionSiteEntity entity = new ProductionSiteEntity();
-        entity.setCode(ProductionSiteCode.PT);
-        entity.setDisplayName("Portugal");
-        entity.setTimezone("Europe/Lisbon");
+        entity.setCode(code);
+        entity.setDisplayName(code.displayName());
+        entity.setTimezone(code.timezone());
         entity.setActive(true);
         return entity;
     }

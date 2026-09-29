@@ -561,6 +561,7 @@ class ApplicationFlowIntegrationTest {
 
     private DailyProductionSettingsEntity settings(LocalDate date, int capacity, int target) {
         DailyProductionSettingsEntity settings = new DailyProductionSettingsEntity();
+        settings.setProductionSite(portugal);
         settings.setSettingsKey("DATE:" + date);
         settings.setSettingsDate(date);
         settings.setDailyCapacity(capacity);

@@ -15,6 +15,8 @@ public interface DriverRepository extends JpaRepository<DriverEntity, UUID> {
 
     Optional<DriverEntity> findByDriverCode(String driverCode);
 
+    Optional<DriverEntity> findByNameIgnoreCase(String name);
+
     Optional<DriverEntity> findByTelegramUserId(Long telegramUserId);
 
     @Query(value = "select nextval('driver_code_seq')", nativeQuery = true)

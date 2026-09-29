@@ -22,11 +22,12 @@ public class ProductionSettingsController {
 
     @GetMapping
     public DailySettingsResponse get(@RequestParam LocalDate date) {
-        return settings.get(date);
+        return settings.get(currentUserService.requireUser().productionSiteCode(), date);
     }
 
     @PutMapping
     public DailySettingsResponse update(@RequestParam LocalDate date, @Valid @RequestBody DailySettingsRequest request) {
-        return settings.update(date, request, currentUserService.requireUser().actorLabel());
+        var user = currentUserService.requireUser();
+        return settings.update(user.productionSiteCode(), date, request, user.actorLabel());
     }
 }

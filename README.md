@@ -121,9 +121,119 @@ The current code uses a generic external reference model because no single canon
 
 ## Local Development
 
+Rucoplan keeps two concepts separate:
+
+- Environment: `local` for development, `production` for Heroku.
+- Production site: `PT` for Portugal, `LUX` for Luxembourg.
+
+Do not use Spring profiles named `pt` or `lux`; they are business units inside the same application and database.
+
 Use the project scripts and environment examples included in the repository to start the application locally. Do not commit local environment files or real integration credentials.
 
-Detailed environment-specific setup notes should be kept outside public documentation.
+```bash
+cp .env.example .env
+scripts/start-local-stack.sh local
+```
+
+Local demo data is opt-in:
+
+```bash
+DEMO_DATA_ENABLED=true SPRING_PROFILES_ACTIVE=local scripts/start-backend.sh
+```
+
+To inspect or normalize existing local demo data:
+
+```bash
+scripts/reset-local-demo-data.sh --dry-run
+scripts/reset-local-demo-data.sh --apply
+```
+
+The reset script refuses non-local database hosts, preserves the internal `teste` driver and linked Telegram identity, reassigns demo requests from removed drivers to `teste`, and renames local demo customers to `loja de jantes de AAAA`, `loja de jantes de BBBB`, and so on per production site.
+
+## Heroku Deployment
+
+The application is deployable on Heroku with the Java buildpack and the included `Procfile`. It uses the Heroku `PORT`, PostgreSQL, Flyway migrations, graceful shutdown and forwarded HTTPS headers.
+
+Required Heroku config vars:
+
+```bash
+heroku config:set SPRING_PROFILES_ACTIVE=production
+heroku config:set APP_ENVIRONMENT=production
+heroku config:set PUBLIC_BASE_URL=https://your-app.herokuapp.com
+heroku config:set TELEGRAM_ENABLED=false
+heroku config:set TELEGRAM_WEBHOOK_AUTO_REGISTER=false
+heroku config:set APP_TOKEN_SECRET=replace-with-a-long-random-secret
+```
+
+Add PostgreSQL:
+
+```bash
+heroku addons:create heroku-postgresql:essential-0
+```
+
+Heroku supplies `DATABASE_URL`; the application converts it to Spring JDBC settings at startup. A new production database receives only schema/reference data such as `PT` and `LUX`, plus explicitly configured bootstrap/admin data. Demo customers, drivers, requests, plans, factory arrivals, alerts and fake Telegram/WhatsApp conversations are not seeded in the `production` profile.
+
+First deploy:
+
+```bash
+git push heroku main
+heroku ps:scale web=1
+heroku logs --tail
+heroku open /actuator/health
+```
+
+To verify production has no demo functional data:
+
+```bash
+heroku pg:psql -c "select count(*) from wheel_intake_request"
+heroku pg:psql -c "select count(*) from customer_reference"
+heroku pg:psql -c "select count(*) from driver"
+```
+
+If an existing production database already contains unwanted data, do not run automatic cleanup. Take a backup, inspect counts per table, agree a manual migration/cleanup script, test it against a restored copy, and only then apply it.
+
+## Telegram Webhook
+
+ngrok is only for local development. In local mode, set `TELEGRAM_WEBHOOK_BASE_URL` externally to the current ngrok HTTPS URL:
+
+```bash
+TELEGRAM_ENABLED=true TELEGRAM_WEBHOOK_BASE_URL=https://example.ngrok.app scripts/start-local-stack.sh ngrok
+scripts/telegram-webhook-register
+scripts/telegram-webhook-info
+scripts/telegram-webhook-delete
+```
+
+In Heroku production, set `PUBLIC_BASE_URL` to the public HTTPS app or custom domain and leave ngrok unset:
+
+```bash
+heroku config:set TELEGRAM_ENABLED=true
+heroku config:set TELEGRAM_BOT_TOKEN=replace-with-production-bot-token
+heroku config:set TELEGRAM_WEBHOOK_SECRET=replace-with-random-secret
+heroku config:set TELEGRAM_WEBHOOK_AUTO_REGISTER=true
+```
+
+Manual webhook commands use environment variables and never require tokens in source files:
+
+```bash
+PUBLIC_BASE_URL=https://your-app.herokuapp.com TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... scripts/telegram-webhook-register
+TELEGRAM_BOT_TOKEN=... scripts/telegram-webhook-info
+TELEGRAM_BOT_TOKEN=... scripts/telegram-webhook-delete
+```
+
+One Telegram bot can have only one active webhook at a time. Use different bot tokens for local and production, or explicitly switch the webhook when testing.
+
+The backend validates `X-Telegram-Bot-Api-Secret-Token`, rejects invalid secrets, stores each `update_id`, and returns successfully processed duplicate updates without creating duplicate requests.
+
+## Production-Site Isolation
+
+Portugal and Luxembourg share one application and one database, with logical isolation by `production_site_id`. Legacy rows without a site are backfilled to `PT`; new functional rows require a site. Customers are unique by `(production_site_id, normalized_name)`, so PT and LUX can have independent customers with the same demo name. Plans, targets, daily settings, capacity alerts, SSE updates and scheduler runs operate per site.
+
+To verify isolation:
+
+```bash
+heroku pg:psql -c "select s.code, count(*) from wheel_intake_request r join production_site s on s.id = r.production_site_id group by s.code"
+heroku pg:psql -c "select s.code, sum(expected_wheel_quantity) from wheel_intake_request r join production_site s on s.id = r.production_site_id group by s.code"
+```
 
 ## Tests
 
@@ -131,9 +241,13 @@ Run the backend and static frontend checks with:
 
 ```bash
 mvn test
+mvn verify
+mvn jacoco:report
 ```
 
 PostgreSQL migration tests require a working Docker/Testcontainers environment.
+
+Coverage reports are generated under `target/site/jacoco/index.html`.
 
 ## Documentation
 

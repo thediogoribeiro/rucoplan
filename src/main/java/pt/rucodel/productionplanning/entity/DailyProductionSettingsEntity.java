@@ -6,9 +6,12 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 
 import java.time.LocalDate;
@@ -19,14 +22,22 @@ import java.util.UUID;
 @Entity
 @Table(
         name = "daily_production_settings",
-        indexes = @Index(name = "idx_daily_settings_date", columnList = "settings_date")
+        uniqueConstraints = @UniqueConstraint(name = "uk_daily_settings_site_key", columnNames = {"production_site_id", "settings_key"}),
+        indexes = {
+                @Index(name = "idx_daily_settings_date", columnList = "settings_date"),
+                @Index(name = "idx_daily_settings_site_date", columnList = "production_site_id, settings_date")
+        }
 )
 public class DailyProductionSettingsEntity extends BaseEntity {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
 
-    @Column(name = "settings_key", nullable = false, unique = true, length = 80)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_site_id", nullable = false)
+    private ProductionSiteEntity productionSite;
+
+    @Column(name = "settings_key", nullable = false, length = 80)
     private String settingsKey;
 
     @Column(name = "settings_date")
@@ -58,6 +69,14 @@ public class DailyProductionSettingsEntity extends BaseEntity {
 
     public UUID getId() {
         return id;
+    }
+
+    public ProductionSiteEntity getProductionSite() {
+        return productionSite;
+    }
+
+    public void setProductionSite(ProductionSiteEntity productionSite) {
+        this.productionSite = productionSite;
     }
 
     public String getSettingsKey() {

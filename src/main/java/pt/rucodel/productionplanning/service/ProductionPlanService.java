@@ -82,39 +82,54 @@ public class ProductionPlanService {
 
     @Transactional(readOnly = true)
     public PlanResponse getLatest(LocalDate date) {
-        ProductionPlanEntity plan = plans.findFirstByPlanningDateOrderByVersionNumberDesc(date)
+        return getLatest(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional(readOnly = true)
+    public PlanResponse getLatest(ProductionSiteCode siteCode, LocalDate date) {
+        ProductionPlanEntity plan = plans.findFirstByProductionSite_CodeAndPlanningDateOrderByVersionNumberDesc(siteCode, date)
                 .orElseThrow(() -> new EntityNotFoundException("Production plan was not found."));
-        return mapper.toPlan(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId()));
+        return mapper.toPlan(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()));
     }
 
     @Transactional
     public PlanResponse getOrGenerate(LocalDate date) {
-        return plans.findFirstByPlanningDateOrderByVersionNumberDesc(date)
+        return getOrGenerate(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional
+    public PlanResponse getOrGenerate(ProductionSiteCode siteCode, LocalDate date) {
+        return plans.findFirstByProductionSite_CodeAndPlanningDateOrderByVersionNumberDesc(siteCode, date)
                 .filter(plan -> !plan.isRequiresRecalculation())
-                .map(plan -> mapper.toPlan(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId())))
-                .orElseGet(() -> generate(date, GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM"));
+                .map(plan -> mapper.toPlan(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId())))
+                .orElseGet(() -> generate(siteCode, date, GenerationTrigger.AUTOMATIC_RECALCULATION, "SYSTEM"));
     }
 
     @Transactional
     public PlanResponse generate(LocalDate date, GenerationTrigger trigger, AuthenticatedUser user) {
-        return generate(date, trigger, user.actorLabel());
+        return generate(user.productionSiteCode(), date, trigger, user.actorLabel());
     }
 
     @Transactional
     public PlanResponse generate(LocalDate date, GenerationTrigger trigger, String actor) {
-        if (!tryAcquirePlanningLock(date)) {
+        return generate(ProductionSiteCode.PT, date, trigger, actor);
+    }
+
+    @Transactional
+    public PlanResponse generate(ProductionSiteCode siteCode, LocalDate date, GenerationTrigger trigger, String actor) {
+        if (!tryAcquirePlanningLock(siteCode, date)) {
             throw new InvalidRequestException("PLAN_LOCKED", "A production plan is already being generated for this date.");
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
-        ProductionSiteEntity site = productionSiteService.requireByCode(ProductionSiteCode.PT);
-        DailyProductionSettingsEntity effectiveSettings = settingsService.effectiveSettings(date);
-        ProductionPlanEntity previous = plans.findFirstByPlanningDateOrderByVersionNumberDesc(date).orElse(null);
+        ProductionSiteEntity site = productionSiteService.requireByCode(siteCode);
+        DailyProductionSettingsEntity effectiveSettings = settingsService.effectiveSettings(siteCode, date);
+        ProductionPlanEntity previous = plans.findFirstByProductionSite_CodeAndPlanningDateOrderByVersionNumberDesc(siteCode, date).orElse(null);
         Map<UUID, ProductionPlanItemEntity> previousItems = previous == null
                 ? Map.of()
-                : planItems.findByPlanIdOrderByPriorityScoreAsc(previous.getId()).stream()
+                : planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, previous.getId()).stream()
                 .collect(Collectors.toMap(item -> item.getRequest().getId(), Function.identity(), (a, b) -> a));
 
-        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanning(CLOSED_STATUSES);
+        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_STATUSES);
         PlanningResult result = planningEngine.generate(
                 date,
                 now,
@@ -126,11 +141,11 @@ public class ProductionPlanService {
                 businessZone
         );
 
-        plans.clearCurrentPlan(date);
+        plans.clearCurrentPlanForSite(siteCode, date);
         ProductionPlanEntity plan = new ProductionPlanEntity();
         plan.setProductionSite(site);
         plan.setPlanningDate(date);
-        plan.setVersionNumber(plans.findMaxVersion(date) + 1);
+        plan.setVersionNumber(plans.findMaxVersionForSite(siteCode, date) + 1);
         plan.setCurrentPlan(true);
         plan.setGeneratedAt(now);
         plan.setGenerationTrigger(trigger);
@@ -166,21 +181,31 @@ public class ProductionPlanService {
 
     @Transactional
     public void ensurePlan(LocalDate date, GenerationTrigger trigger) {
-        boolean missingOrDirty = plans.findFirstByPlanningDateOrderByVersionNumberDesc(date)
+        ensurePlan(ProductionSiteCode.PT, date, trigger);
+    }
+
+    @Transactional
+    public void ensurePlan(ProductionSiteCode siteCode, LocalDate date, GenerationTrigger trigger) {
+        boolean missingOrDirty = plans.findFirstByProductionSite_CodeAndPlanningDateOrderByVersionNumberDesc(siteCode, date)
                 .map(ProductionPlanEntity::isRequiresRecalculation)
                 .orElse(true);
         if (missingOrDirty) {
-            generate(date, trigger, "SYSTEM");
+            generate(siteCode, date, trigger, "SYSTEM");
         }
     }
 
     @Transactional
     public AdminDashboardResponse dashboard(LocalDate date) {
-        PlanResponse plan = plans.findFirstByPlanningDateOrderByVersionNumberDesc(date)
-                .map(entity -> mapper.toPlan(entity, planItems.findByPlanIdOrderByPriorityScoreAsc(entity.getId())))
+        return dashboard(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional
+    public AdminDashboardResponse dashboard(ProductionSiteCode siteCode, LocalDate date) {
+        PlanResponse plan = plans.findFirstByProductionSite_CodeAndPlanningDateOrderByVersionNumberDesc(siteCode, date)
+                .map(entity -> mapper.toPlan(entity, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, entity.getId())))
                 .orElse(null);
-        DailyProductionSettingsEntity settings = settingsService.effectiveSettings(date);
-        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanning(CLOSED_STATUSES);
+        DailyProductionSettingsEntity settings = settingsService.effectiveSettings(siteCode, date);
+        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_STATUSES);
         List<RequestResponse> expectedToday = openRequests.stream()
                 .filter(request -> request.getActualFactoryArrivalAt() == null)
                 .filter(request -> request.getExpectedFactoryDropOffWindowEnd().atZoneSameInstant(businessZone).toLocalDate().equals(date))
@@ -232,12 +257,12 @@ public class ProductionPlanService {
         );
     }
 
-    private boolean tryAcquirePlanningLock(LocalDate date) {
+    private boolean tryAcquirePlanningLock(ProductionSiteCode siteCode, LocalDate date) {
         try {
             Boolean result = jdbcTemplate.queryForObject(
                     "select pg_try_advisory_xact_lock(hashtext(?))",
                     Boolean.class,
-                    "production-planning:" + date
+                    "production-planning:" + siteCode + ":" + date
             );
             return Boolean.TRUE.equals(result);
         } catch (DataAccessException ex) {

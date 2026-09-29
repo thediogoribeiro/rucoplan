@@ -22,7 +22,7 @@ public class ProductionPlanController {
 
     @GetMapping("/plans")
     public PlanResponse get(@RequestParam LocalDate date) {
-        return plans.getOrGenerate(date);
+        return plans.getOrGenerate(currentUserService.requireUser().productionSiteCode(), date);
     }
 
     @PostMapping("/plans/generate")
@@ -32,6 +32,6 @@ public class ProductionPlanController {
 
     @GetMapping("/dashboard")
     public AdminDashboardResponse dashboard(@RequestParam LocalDate date) {
-        return plans.dashboard(date);
+        return plans.dashboard(currentUserService.requireUser().productionSiteCode(), date);
     }
 }

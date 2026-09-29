@@ -3,6 +3,7 @@ package pt.rucodel.productionplanning.service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.dto.DailySettingsRequest;
 import pt.rucodel.productionplanning.dto.DailySettingsResponse;
 import pt.rucodel.productionplanning.dto.TimeWindowDto;
@@ -25,35 +26,55 @@ public class ProductionSettingsService {
     private final ApiMapper mapper;
     private final RecalculationService recalculationService;
     private final CapacityAlertService capacityAlertService;
+    private final ProductionSiteService productionSites;
     private final int defaultFallbackMinutes;
 
     public ProductionSettingsService(DailyProductionSettingsRepository settings, ApiMapper mapper,
                                      RecalculationService recalculationService,
                                      CapacityAlertService capacityAlertService,
+                                     ProductionSiteService productionSites,
                                      @Value("${app.planning.fallback-minutes-per-wheel}") int defaultFallbackMinutes) {
         this.settings = settings;
         this.mapper = mapper;
         this.recalculationService = recalculationService;
         this.capacityAlertService = capacityAlertService;
+        this.productionSites = productionSites;
         this.defaultFallbackMinutes = defaultFallbackMinutes;
     }
 
     @Transactional
     public DailyProductionSettingsEntity effectiveSettings(LocalDate date) {
-        return settings.findBySettingsDate(date).orElseGet(this::defaultSettings);
+        return effectiveSettings(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional
+    public DailyProductionSettingsEntity effectiveSettings(ProductionSiteCode siteCode, LocalDate date) {
+        return settings.findByProductionSite_CodeAndSettingsDate(siteCode, date)
+                .orElseGet(() -> defaultSettings(siteCode));
     }
 
     @Transactional(readOnly = true)
     public DailySettingsResponse get(LocalDate date) {
-        return mapper.toSettings(settings.findBySettingsDate(date)
-                .or(() -> settings.findBySettingsKey(DEFAULT_KEY))
+        return get(ProductionSiteCode.PT, date);
+    }
+
+    @Transactional(readOnly = true)
+    public DailySettingsResponse get(ProductionSiteCode siteCode, LocalDate date) {
+        return mapper.toSettings(settings.findByProductionSite_CodeAndSettingsDate(siteCode, date)
+                .or(() -> settings.findByProductionSite_CodeAndSettingsKey(siteCode, DEFAULT_KEY))
                 .orElseGet(this::newUnsavedDefaultSettings));
     }
 
     @Transactional
     public DailySettingsResponse update(LocalDate date, DailySettingsRequest request, String actor) {
-        DailyProductionSettingsEntity entity = settings.findBySettingsDate(date).orElseGet(() -> {
+        return update(ProductionSiteCode.PT, date, request, actor);
+    }
+
+    @Transactional
+    public DailySettingsResponse update(ProductionSiteCode siteCode, LocalDate date, DailySettingsRequest request, String actor) {
+        DailyProductionSettingsEntity entity = settings.findByProductionSite_CodeAndSettingsDate(siteCode, date).orElseGet(() -> {
             DailyProductionSettingsEntity created = new DailyProductionSettingsEntity();
+            created.setProductionSite(productionSites.requireByCode(siteCode));
             created.setSettingsKey("DATE:" + date);
             created.setSettingsDate(date);
             created.setCreatedBy(actor);
@@ -64,15 +85,21 @@ public class ProductionSettingsService {
         }
         apply(entity, request, actor);
         DailyProductionSettingsEntity saved = settings.save(entity);
-        recalculationService.markCurrentAndFuturePlans();
-        capacityAlertService.recalculate(date);
+        recalculationService.markCurrentAndFuturePlans(siteCode);
+        capacityAlertService.recalculate(siteCode, date);
         return mapper.toSettings(saved);
     }
 
     @Transactional
     public DailyProductionSettingsEntity defaultSettings() {
-        return settings.findBySettingsKey(DEFAULT_KEY).orElseGet(() -> {
+        return defaultSettings(ProductionSiteCode.PT);
+    }
+
+    @Transactional
+    public DailyProductionSettingsEntity defaultSettings(ProductionSiteCode siteCode) {
+        return settings.findByProductionSite_CodeAndSettingsKey(siteCode, DEFAULT_KEY).orElseGet(() -> {
             DailyProductionSettingsEntity entity = newUnsavedDefaultSettings();
+            entity.setProductionSite(productionSites.requireByCode(siteCode));
             return settings.save(entity);
         });
     }

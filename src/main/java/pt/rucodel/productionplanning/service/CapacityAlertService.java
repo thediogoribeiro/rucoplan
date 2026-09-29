@@ -110,7 +110,7 @@ public class CapacityAlertService {
         for (LocalDate date : datesToCheck) {
             List<WheelIntakeRequestEntity> dueRequests = requestsByDueDate.getOrDefault(date, List.of());
             int required = dueRequests.stream().mapToInt(this::quantityForPlanning).sum();
-            int capacity = effectiveCapacity(date);
+            int capacity = effectiveCapacity(siteCode, date);
             int deficit = Math.max(required - capacity, 0);
             Optional<CapacityAlertEntity> existing = alerts.findFirstByProductionSite_CodeAndTypeAndAffectedDateAndStatusIn(
                     siteCode,
@@ -184,9 +184,9 @@ public class CapacityAlertService {
         }
     }
 
-    private int effectiveCapacity(LocalDate date) {
-        return settings.findBySettingsDate(date)
-                .or(() -> settings.findBySettingsKey(ProductionSettingsService.DEFAULT_KEY))
+    private int effectiveCapacity(ProductionSiteCode siteCode, LocalDate date) {
+        return settings.findByProductionSite_CodeAndSettingsDate(siteCode, date)
+                .or(() -> settings.findByProductionSite_CodeAndSettingsKey(siteCode, ProductionSettingsService.DEFAULT_KEY))
                 .map(DailyProductionSettingsEntity::getDailyCapacity)
                 .orElse(40);
     }

@@ -1,0 +1,9 @@
+app:
+  environment: ${APP_ENVIRONMENT:production}
+  seed:
+    enabled: false
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate

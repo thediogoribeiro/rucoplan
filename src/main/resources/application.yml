@@ -1,13 +1,15 @@
 server:
   port: ${PORT:${SERVER_PORT:8082}}
+  forward-headers-strategy: framework
+  shutdown: graceful
 
 spring:
   application:
     name: production-planning
   datasource:
-    url: ${PRODUCTION_PLANNING_DB_URL:jdbc:postgresql://localhost:15433/production_planning}
-    username: ${PRODUCTION_PLANNING_DB_USERNAME:production_planning}
-    password: ${PRODUCTION_PLANNING_DB_PASSWORD:production_planning}
+    url: ${JDBC_DATABASE_URL:${PRODUCTION_PLANNING_DB_URL:jdbc:postgresql://localhost:15433/production_planning}}
+    username: ${JDBC_DATABASE_USERNAME:${PRODUCTION_PLANNING_DB_USERNAME:production_planning}}
+    password: ${JDBC_DATABASE_PASSWORD:${PRODUCTION_PLANNING_DB_PASSWORD:production_planning}}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -17,6 +19,8 @@ spring:
     open-in-view: false
   mvc:
     log-request-details: false
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
 
 management:
   endpoints:
@@ -28,6 +32,8 @@ management:
       show-details: when-authorized
 
 app:
+  environment: ${APP_ENVIRONMENT:local}
+  public-base-url: ${PUBLIC_BASE_URL:}
   display-name: ${APP_DISPLAY_NAME:Rucodel Production Planning}
   timezone: ${APP_BUSINESS_TIMEZONE:Europe/Lisbon}
   auth:
@@ -55,7 +61,8 @@ app:
       bot-token: ${TELEGRAM_BOT_TOKEN:}
       bot-username: ${TELEGRAM_BOT_USERNAME:RucodelPlanBot}
       webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
-      webhook-base-url: ${TELEGRAM_WEBHOOK_BASE_URL:}
+      webhook-base-url: ${TELEGRAM_WEBHOOK_BASE_URL:${PUBLIC_BASE_URL:}}
+      webhook-auto-register: ${TELEGRAM_WEBHOOK_AUTO_REGISTER:false}
     whatsapp:
       token: ${APP_WHATSAPP_INTEGRATION_TOKEN:}
       enabled: ${WHATSAPP_ENABLED:false}
@@ -75,4 +82,4 @@ app:
       base-url: ${RUCOPI_BASE_URL:}
       timeout-millis: ${RUCOPI_TIMEOUT_MILLIS:3000}
   seed:
-    enabled: ${APP_SEED_ENABLED:true}
+    enabled: ${DEMO_DATA_ENABLED:${APP_SEED_ENABLED:false}}

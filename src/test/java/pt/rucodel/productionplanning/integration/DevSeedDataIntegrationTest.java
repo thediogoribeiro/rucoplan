@@ -8,14 +8,14 @@ import pt.rucodel.productionplanning.repository.WheelIntakeRequestRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = "app.seed.enabled=true")
-@ActiveProfiles({"test", "dev"})
+@ActiveProfiles({"test", "local"})
 class DevSeedDataIntegrationTest {
     @jakarta.annotation.Resource WheelIntakeRequestRepository requests;
 
     @Test
     void developmentSeedCreatesRequestsWithPublicCodes() {
         assertThat(requests.findAll())
-                .hasSize(6)
+                .hasSize(8)
                 .allSatisfy(request -> assertThat(request.getRequestCode())
                         .startsWith("REQ-")
                         .hasSizeLessThanOrEqualTo(15));
