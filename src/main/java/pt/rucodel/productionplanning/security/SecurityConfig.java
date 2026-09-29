@@ -1,6 +1,7 @@
 package pt.rucodel.productionplanning.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -51,6 +52,7 @@ public class SecurityConfig {
                                 "ACCESS_DENIED",
                                 "Não tem permissões para aceder a este recurso.")))
                 .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/", "/index.html", "/login.html", "/driver.html", "/admin.html", "/print-plan.html",
                                 "/admin/system-diagnostics/realtime",
                                 "/css/**", "/js/**", "/openapi.yaml").permitAll()

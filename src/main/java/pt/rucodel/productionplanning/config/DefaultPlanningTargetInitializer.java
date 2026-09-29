@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.rucodel.productionplanning.domain.PlanningTargetDefaults;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.ProductionTargetConfigurationEntity;
+import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.repository.ProductionTargetConfigurationRepository;
 import pt.rucodel.productionplanning.service.ProductionSiteService;
 
@@ -34,20 +35,25 @@ public class DefaultPlanningTargetInitializer implements ApplicationRunner {
     @Transactional
     public void run(ApplicationArguments args) {
         lockDefaultTargetInitialization();
-        var portugal = productionSites.portugal();
-        if (!targets.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.PT).isEmpty()) {
+        productionSites.activeSites().forEach(this::ensureDefaultTargets);
+    }
+
+    private void ensureDefaultTargets(ProductionSiteEntity site) {
+        ProductionSiteCode siteCode = site.getCode();
+        if (!targets.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(siteCode).isEmpty()) {
             return;
         }
+        int minimum = PlanningTargetDefaults.minimumDailyTarget(siteCode);
+        int capacity = PlanningTargetDefaults.regularDailyCapacity(siteCode);
         ProductionTargetConfigurationEntity entity = new ProductionTargetConfigurationEntity();
-        entity.setProductionSite(portugal);
-        entity.setMinimumDailyTarget(PlanningTargetDefaults.MINIMUM_DAILY_TARGET);
-        entity.setRegularDailyCapacity(PlanningTargetDefaults.REGULAR_DAILY_CAPACITY);
+        entity.setProductionSite(site);
+        entity.setMinimumDailyTarget(minimum);
+        entity.setRegularDailyCapacity(capacity);
         entity.setEffectiveFrom(PlanningTargetDefaults.EFFECTIVE_FROM);
         entity.setCreatedBy(PlanningTargetDefaults.CREATED_BY);
         targets.saveAndFlush(entity);
-        LOGGER.info("Created default production targets minimumDailyTarget={} regularDailyCapacity={}",
-                PlanningTargetDefaults.MINIMUM_DAILY_TARGET,
-                PlanningTargetDefaults.REGULAR_DAILY_CAPACITY);
+        LOGGER.info("Created default production targets site={} minimumDailyTarget={} regularDailyCapacity={}",
+                siteCode, minimum, capacity);
     }
 
     private void lockDefaultTargetInitialization() {

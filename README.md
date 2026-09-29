@@ -226,7 +226,7 @@ The backend validates `X-Telegram-Bot-Api-Secret-Token`, rejects invalid secrets
 
 ## Production-Site Isolation
 
-Portugal and Luxembourg share one application and one database, with logical isolation by `production_site_id`. Legacy rows without a site are backfilled to `PT`; new functional rows require a site. Customers are unique by `(production_site_id, normalized_name)`, so PT and LUX can have independent customers with the same demo name. Plans, targets, daily settings, capacity alerts, SSE updates and scheduler runs operate per site.
+Portugal and Luxembourg share one application and one database, with logical isolation by `production_site_id`. Legacy rows without a site are backfilled to `PT`; new functional rows require a site. Customers are unique by `(production_site_id, normalized_name)`, so PT and LUX can have independent customers with the same demo name. Plans, targets, daily settings, capacity alerts, SSE updates and scheduler runs operate per site. Default targets are independent: PT uses 150/180 and LUX uses 20/60 unless overridden by configured targets.
 
 To verify isolation:
 

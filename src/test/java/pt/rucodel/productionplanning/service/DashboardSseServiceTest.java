@@ -56,12 +56,14 @@ class DashboardSseServiceTest {
 
     @Test
     void failedEmittersAreRemoved() {
-        CountingDashboardSseService service = new CountingDashboardSseService(new FailingAfterFirstSendEmitter());
+        FailingAfterFirstSendEmitter emitter = new FailingAfterFirstSendEmitter();
+        CountingDashboardSseService service = new CountingDashboardSseService(emitter);
         service.subscribe();
 
         service.sendHeartbeat();
 
         assertThat(service.activeClientCount()).isZero();
+        assertThat(emitter.isCompleted()).isTrue();
     }
 
     private static class CountingDashboardSseService extends DashboardSseService {
@@ -82,6 +84,7 @@ class DashboardSseServiceTest {
 
     private abstract static class TestEmitter extends SseEmitter {
         private final java.util.ArrayList<String> sentPayloads = new java.util.ArrayList<>();
+        private boolean completed;
 
         private TestEmitter() {
             super(0L);
@@ -92,6 +95,16 @@ class DashboardSseServiceTest {
                     .map(data -> data.getData().toString())
                     .reduce("", String::concat);
             sentPayloads.add(payload);
+        }
+
+        @Override
+        public void complete() {
+            completed = true;
+            super.complete();
+        }
+
+        boolean isCompleted() {
+            return completed;
         }
     }
 

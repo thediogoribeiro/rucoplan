@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import pt.rucodel.productionplanning.config.DefaultPlanningTargetInitializer;
 import pt.rucodel.productionplanning.domain.PlanningTargetDefaults;
+import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.entity.ProductionTargetConfigurationEntity;
 import pt.rucodel.productionplanning.repository.ProductionTargetConfigurationRepository;
 
@@ -26,25 +27,40 @@ class DefaultPlanningTargetInitializerIntegrationTest {
     void createsDefaultTargetsOnceAndDoesNotOverwriteExistingTargets() {
         initializer.run(null);
 
-        assertThat(targetConfigurations.findAll()).singleElement().satisfies(target -> {
+        assertThat(targetConfigurations.findAll()).hasSize(2);
+        assertThat(targetConfigurations.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.PT))
+                .singleElement()
+                .satisfies(target -> {
             assertThat(target.getMinimumDailyTarget()).isEqualTo(PlanningTargetDefaults.MINIMUM_DAILY_TARGET);
             assertThat(target.getRegularDailyCapacity()).isEqualTo(PlanningTargetDefaults.REGULAR_DAILY_CAPACITY);
             assertThat(target.getCreatedBy()).isEqualTo(PlanningTargetDefaults.CREATED_BY);
         });
+        assertThat(targetConfigurations.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.LUX))
+                .singleElement()
+                .satisfies(target -> {
+                    assertThat(target.getMinimumDailyTarget()).isEqualTo(20);
+                    assertThat(target.getRegularDailyCapacity()).isEqualTo(60);
+                    assertThat(target.getCreatedBy()).isEqualTo(PlanningTargetDefaults.CREATED_BY);
+                });
 
         initializer.run(null);
-        assertThat(targetConfigurations.findAll()).hasSize(1);
+        assertThat(targetConfigurations.findAll()).hasSize(2);
 
-        ProductionTargetConfigurationEntity existing = targetConfigurations.findAll().getFirst();
+        ProductionTargetConfigurationEntity existing = targetConfigurations
+                .findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.LUX)
+                .getFirst();
         existing.setMinimumDailyTarget(20);
-        existing.setRegularDailyCapacity(30);
+        existing.setRegularDailyCapacity(70);
         targetConfigurations.saveAndFlush(existing);
 
         initializer.run(null);
 
-        assertThat(targetConfigurations.findAll()).singleElement().satisfies(target -> {
+        assertThat(targetConfigurations.findAll()).hasSize(2);
+        assertThat(targetConfigurations.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.LUX))
+                .singleElement()
+                .satisfies(target -> {
             assertThat(target.getMinimumDailyTarget()).isEqualTo(20);
-            assertThat(target.getRegularDailyCapacity()).isEqualTo(30);
+            assertThat(target.getRegularDailyCapacity()).isEqualTo(70);
         });
     }
 }

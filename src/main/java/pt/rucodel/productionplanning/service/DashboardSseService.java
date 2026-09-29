@@ -175,6 +175,7 @@ public class DashboardSseService {
 
     private void removeEmitter(SseClient client, String reason, Throwable error) {
         if (emitters.remove(client)) {
+            completeEmitter(client.emitter(), reason);
             if (error != null || reason.contains("error") || reason.contains("failed")) {
                 lastFailureAt = OffsetDateTime.now(ZoneOffset.UTC);
                 lastErrorCode = "REALTIME_CONNECTION_FAILED";
@@ -183,6 +184,14 @@ public class DashboardSseService {
                         client.siteCode(), reason, lastCorrelationId, emitters.size());
             }
             LOGGER.info("Production planning SSE client disconnected site={} reason={} activeClients={}", client.siteCode(), reason, emitters.size());
+        }
+    }
+
+    private void completeEmitter(SseEmitter emitter, String reason) {
+        try {
+            emitter.complete();
+        } catch (IllegalStateException exception) {
+            LOGGER.debug("SSE emitter was already completed reason={}", reason, exception);
         }
     }
 

@@ -82,7 +82,7 @@ Targets sao independentes por site.
 
 Portugal preserva os targets existentes e os defaults operacionais `150/180`.
 
-Luxemburgo nao herda os targets de Portugal automaticamente. Enquanto nao existir configuracao LUX, o sistema deve apresentar o estado "Targets por configurar" e impedir planos definitivos que dependam desses targets.
+Luxemburgo nao herda os targets de Portugal. Os defaults de Luxemburgo sao independentes: minimo 20 e maximo 60. Se forem criados targets manuais para LUX, esses valores substituem o default a partir da respetiva data efetiva.
 
 ## Planeamento
 

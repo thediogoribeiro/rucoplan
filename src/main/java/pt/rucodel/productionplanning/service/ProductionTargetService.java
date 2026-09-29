@@ -32,15 +32,7 @@ public class ProductionTargetService {
     @Transactional(readOnly = true)
     public ProductionTargetConfigurationEntity effectiveFor(ProductionSiteCode siteCode, LocalDate date) {
         return targets.findFirstByProductionSite_CodeAndEffectiveFromLessThanEqualOrderByEffectiveFromDescCreatedAtDesc(siteCode, date)
-                .orElseGet(() -> {
-                    if (siteCode == ProductionSiteCode.PT) {
-                        return systemDefaultTarget(productionSites.portugal(), date);
-                    }
-                    throw new InvalidRequestException(
-                            "TARGET_CONFIGURATION_MISSING",
-                            "Configure os targets da unidade de produção antes de gerar o plano."
-                    );
-                });
+                .orElseGet(() -> systemDefaultTarget(productionSites.requireByCode(siteCode), date));
     }
 
     @Transactional(readOnly = true)
@@ -52,10 +44,7 @@ public class ProductionTargetService {
     public List<PlanningTargetResponse> list(ProductionSiteCode siteCode) {
         List<ProductionTargetConfigurationEntity> configured = targets.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(siteCode);
         if (configured.isEmpty()) {
-            if (siteCode == ProductionSiteCode.PT) {
-                return List.of(toResponse(systemDefaultTarget(productionSites.portugal(), LocalDate.now())));
-            }
-            return List.of();
+            return List.of(toResponse(systemDefaultTarget(productionSites.requireByCode(siteCode), LocalDate.now())));
         }
         return configured.stream()
                 .map(this::toResponse)
@@ -110,8 +99,8 @@ public class ProductionTargetService {
     private ProductionTargetConfigurationEntity systemDefaultTarget(ProductionSiteEntity site, LocalDate date) {
         ProductionTargetConfigurationEntity fallback = new ProductionTargetConfigurationEntity();
         fallback.setProductionSite(site);
-        fallback.setMinimumDailyTarget(PlanningTargetDefaults.MINIMUM_DAILY_TARGET);
-        fallback.setRegularDailyCapacity(PlanningTargetDefaults.REGULAR_DAILY_CAPACITY);
+        fallback.setMinimumDailyTarget(PlanningTargetDefaults.minimumDailyTarget(site.getCode()));
+        fallback.setRegularDailyCapacity(PlanningTargetDefaults.regularDailyCapacity(site.getCode()));
         fallback.setEffectiveFrom(date == null ? PlanningTargetDefaults.EFFECTIVE_FROM : date);
         fallback.setCreatedBy(PlanningTargetDefaults.CREATED_BY);
         fallback.markSystemDefault();
