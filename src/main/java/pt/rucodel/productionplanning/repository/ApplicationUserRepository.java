@@ -15,11 +15,18 @@ public interface ApplicationUserRepository extends JpaRepository<ApplicationUser
     @Query("""
             select u from ApplicationUserEntity u
             left join fetch u.driver
-            where u.username = :username
+            where lower(u.username) = :normalizedUsername
             """)
-    Optional<ApplicationUserEntity> findWithDriverByUsername(String username);
+    Optional<ApplicationUserEntity> findWithDriverByNormalizedUsername(String normalizedUsername);
 
-    boolean existsByUsername(String username);
+    @Query("""
+            select u from ApplicationUserEntity u
+            left join fetch u.driver
+            where u.id = :id
+            """)
+    Optional<ApplicationUserEntity> findWithDriverById(UUID id);
+
+    boolean existsByUsernameIgnoreCase(String username);
 
     List<ApplicationUserEntity> findByRoleOrderByDisplayName(UserRole role);
 }

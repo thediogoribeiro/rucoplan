@@ -20,9 +20,8 @@ public class DatabaseTokenAuthenticationValidator implements TokenAuthentication
 
     @Override
     public AuthenticatedUser validate(TokenClaims claims) {
-        ApplicationUserEntity user = users.findWithDriverByUsername(claims.username())
+        ApplicationUserEntity user = users.findWithDriverById(claims.userId())
                 .filter(ApplicationUserEntity::isActive)
-                .filter(entity -> entity.getId().equals(claims.userId()))
                 .orElseThrow(() -> new InvalidRequestException("AUTHENTICATION_FAILED", "Invalid authentication token."));
         return new AuthenticatedUser(
                 user.getId(),

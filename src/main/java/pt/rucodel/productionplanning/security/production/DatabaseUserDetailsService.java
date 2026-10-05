@@ -9,6 +9,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
+import pt.rucodel.productionplanning.security.UsernameNormalizer;
 
 import java.util.List;
 
@@ -23,7 +24,7 @@ public class DatabaseUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        ApplicationUserEntity user = users.findWithDriverByUsername(username)
+        ApplicationUserEntity user = users.findWithDriverByNormalizedUsername(UsernameNormalizer.normalize(username))
                 .orElseThrow(() -> new UsernameNotFoundException("User not found."));
         return new User(
                 user.getUsername(),

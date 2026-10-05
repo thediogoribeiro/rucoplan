@@ -17,6 +17,11 @@ class FrontendStaticFlowTest {
         String driverHtml = Files.readString(STATIC.resolve("driver.html"));
 
         assertThat(login).contains("/api/v1/auth/login");
+        assertThat(login).contains("const payload = {");
+        assertThat(login).contains("username: form.username.value.trim()");
+        assertThat(login).contains("password: form.password.value");
+        assertThat(login).contains("productionSite: form.productionSite.value");
+        assertThat(login).contains("api.postJson('/api/v1/auth/login', payload, { auth: false })");
         assertThat(driverHtml).contains("Motorista/Vendedor");
         assertThat(driver).contains("/api/v1/driver/requests");
         assertThat(driver).contains("Jantes bipartidas", "Jantes lavadas", "Jantes normais");

@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
 import pt.rucodel.productionplanning.dto.ErrorResponse;
+import pt.rucodel.productionplanning.security.RequestCorrelationFilter;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -155,6 +156,10 @@ public class GlobalExceptionHandler {
     }
 
     private String correlationId(HttpServletRequest request) {
+        Object existing = request.getAttribute(RequestCorrelationFilter.ATTRIBUTE);
+        if (existing instanceof String correlationId && SAFE_CORRELATION_ID.matcher(correlationId).matches()) {
+            return correlationId;
+        }
         String supplied = request.getHeader("X-Correlation-ID");
         if (supplied != null && SAFE_CORRELATION_ID.matcher(supplied).matches()) {
             return supplied;

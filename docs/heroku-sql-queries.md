@@ -134,6 +134,40 @@ commit;
 
 If the returned row is not exactly the intended user, run `rollback;` instead of `commit;`.
 
+Alternative: reset directly inside `heroku pg:psql` without copying a hash between terminals. The `\prompt` line is required because `:'new_password'` is a `psql` variable, not normal SQL.
+
+Run step 1 by itself first. Do not paste the whole block on the same prompt line, and do not replace `new_password` with the actual password.
+
+```sql
+\prompt 'Nova password: ' new_password
+```
+
+Then type the new password when prompted. After that, paste step 2:
+
+```sql
+
+begin;
+
+update app_user
+set password_hash = crypt(:'new_password', gen_salt('bf', 10)),
+    updated_at = now(),
+    updated_by = 'PASSWORD_RESET'
+where username = 'replace-with-username'
+returning username, display_name, role, active, updated_at, updated_by;
+
+select
+    username,
+    password_hash = crypt(:'new_password', password_hash) as password_matches
+from app_user
+where username = 'replace-with-username';
+
+commit;
+
+\unset new_password
+```
+
+`password_matches` must return `t`. If it returns `f`, run the reset again and make sure the password was typed as intended.
+
 ## Authentication Users
 
 List production users:

@@ -1,5 +1,8 @@
 package pt.rucodel.productionplanning.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,9 +15,12 @@ import pt.rucodel.productionplanning.entity.ProductionSiteEntity;
 import pt.rucodel.productionplanning.security.AuthenticatedUser;
 import pt.rucodel.productionplanning.security.AuthenticationProvider;
 import pt.rucodel.productionplanning.security.TokenService;
+import pt.rucodel.productionplanning.security.UsernameNormalizer;
 
 @Service
 public class AuthService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
+
     private final AuthenticationProvider authenticationProvider;
     private final TokenService tokenService;
     private final ProductionSiteService productionSites;
@@ -28,13 +34,18 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
+        String normalizedUsername = UsernameNormalizer.normalize(request.username());
         AuthenticatedAccount account = authenticationProvider.authenticate(request);
         ProductionSiteCode siteCode = ProductionSiteCode.parse(request.productionSite());
         if (siteCode == null) {
+            LOGGER.info("auth.login.final correlationId={} usernameNormalized={} failureReason=INVALID_PRODUCTION_SITE outcome=FAILURE",
+                    correlationId(), normalizedUsername);
             throw new BadCredentialsException("Invalid credentials");
         }
         ProductionSiteEntity site = authenticationProvider.requireSite(account, siteCode);
         TokenService.IssuedToken issued = tokenService.issue(account, site);
+        LOGGER.info("auth.login.final correlationId={} usernameNormalized={} productionSite={} failureReason=NONE outcome=SUCCESS",
+                correlationId(), normalizedUsername, site.getCode());
         return new LoginResponse(issued.token(), issued.expiresAt(), toResponse(account, site));
     }
 
@@ -53,5 +64,10 @@ public class AuthService {
                 user.driverId(),
                 productionSites.toResponse(site)
         );
+    }
+
+    private String correlationId() {
+        String value = MDC.get("correlationId");
+        return value == null || value.isBlank() ? "unavailable" : value;
     }
 }

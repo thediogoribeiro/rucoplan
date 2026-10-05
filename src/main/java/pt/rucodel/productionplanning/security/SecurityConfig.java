@@ -17,8 +17,6 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import pt.rucodel.productionplanning.dto.ErrorResponse;
 
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,6 +36,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint((request, response, exception) -> writeSecurityError(
                                 objectMapper,
                                 request.getRequestURI(),
+                                request,
                                 response,
                                 HttpStatus.UNAUTHORIZED,
                                 "AUTHENTICATION_REQUIRED",
@@ -45,6 +44,7 @@ public class SecurityConfig {
                         .accessDeniedHandler((request, response, exception) -> writeSecurityError(
                                 objectMapper,
                                 request.getRequestURI(),
+                                request,
                                 response,
                                 HttpStatus.FORBIDDEN,
                                 "ACCESS_DENIED",
@@ -70,9 +70,11 @@ public class SecurityConfig {
     }
 
     private void writeSecurityError(ObjectMapper objectMapper, String path,
+                                    jakarta.servlet.http.HttpServletRequest request,
                                     jakarta.servlet.http.HttpServletResponse response,
                                     HttpStatus status, String code, String message) throws java.io.IOException {
-        String correlationId = UUID.randomUUID().toString();
+        Object existing = request.getAttribute(RequestCorrelationFilter.ATTRIBUTE);
+        String correlationId = existing instanceof String value ? value : UUID.randomUUID().toString();
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         response.setHeader("X-Correlation-ID", correlationId);

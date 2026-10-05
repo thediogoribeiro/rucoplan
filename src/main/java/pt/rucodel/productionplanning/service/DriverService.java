@@ -17,6 +17,7 @@ import pt.rucodel.productionplanning.exception.InvalidRequestException;
 import pt.rucodel.productionplanning.mapper.ApiMapper;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 import pt.rucodel.productionplanning.repository.DriverRepository;
+import pt.rucodel.productionplanning.security.UsernameNormalizer;
 
 import java.util.List;
 import java.util.UUID;
@@ -112,11 +113,12 @@ public class DriverService {
     }
 
     private void createDriverUser(DriverEntity driver, ProductionSiteEntity site, String username, String password, String actor) {
-        if (users.existsByUsername(username.trim())) {
+        String normalizedUsername = UsernameNormalizer.normalize(username);
+        if (users.existsByUsernameIgnoreCase(normalizedUsername)) {
             throw new InvalidRequestException("DUPLICATE_USER", "A user with that username already exists.");
         }
         ApplicationUserEntity user = new ApplicationUserEntity();
-        user.setUsername(username.trim());
+        user.setUsername(normalizedUsername);
         user.setDisplayName(driver.getName());
         user.setRole(UserRole.DRIVER);
         user.setPasswordHash(passwordEncoder.encode(password));

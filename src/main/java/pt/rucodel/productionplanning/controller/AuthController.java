@@ -1,6 +1,9 @@
 package pt.rucodel.productionplanning.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -14,12 +17,16 @@ import pt.rucodel.productionplanning.dto.AuthUserResponse;
 import pt.rucodel.productionplanning.dto.LoginRequest;
 import pt.rucodel.productionplanning.dto.LoginResponse;
 import pt.rucodel.productionplanning.security.CurrentUserService;
+import pt.rucodel.productionplanning.security.RequestCorrelationFilter;
 import pt.rucodel.productionplanning.security.TokenService;
+import pt.rucodel.productionplanning.security.UsernameNormalizer;
 import pt.rucodel.productionplanning.service.AuthService;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AuthController.class);
+
     public static final String STREAM_AUTH_COOKIE = "RUCOPLAN_STREAM_AUTH";
 
     private final AuthService authService;
@@ -33,7 +40,10 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
+        LOGGER.info("auth.login.received correlationId={} endpoint={} usernameNormalized={} contentType={}",
+                correlationId(servletRequest), servletRequest.getRequestURI(), UsernameNormalizer.normalize(request.username()),
+                servletRequest.getContentType());
         LoginResponse response = authService.login(request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, streamCookie(response.token(), response.expiresAt()).toString())
@@ -83,5 +93,10 @@ public class AuthController {
                 .path("/api/v1/admin/dashboard/stream")
                 .maxAge(0)
                 .build();
+    }
+
+    private String correlationId(HttpServletRequest request) {
+        Object value = request.getAttribute(RequestCorrelationFilter.ATTRIBUTE);
+        return value instanceof String correlationId ? correlationId : "unavailable";
     }
 }

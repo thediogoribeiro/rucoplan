@@ -13,6 +13,7 @@ import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
+import pt.rucodel.productionplanning.security.UsernameNormalizer;
 import pt.rucodel.productionplanning.service.ProductionSiteService;
 
 import java.util.Arrays;
@@ -46,7 +47,7 @@ public class BootstrapAdminConfig {
                 LOGGER.info("Production bootstrap administrator skipped because user table is not empty.");
                 return;
             }
-            String normalizedUsername = username.trim();
+            String normalizedUsername = UsernameNormalizer.normalize(username);
             ApplicationUserEntity user = new ApplicationUserEntity();
             user.setUsername(normalizedUsername);
             user.setDisplayName(displayName == null || displayName.isBlank() ? "Administrador" : displayName.trim());

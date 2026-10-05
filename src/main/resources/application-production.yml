@@ -9,3 +9,8 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+
+logging:
+  level:
+    root: INFO
+    pt.rucodel.productionplanning: INFO
