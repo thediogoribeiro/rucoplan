@@ -126,17 +126,22 @@ function formatDateTime(value) {
 
 function formatDate(value) {
   if (!value) return '-';
-  const date = new Date(`${value}T00:00:00`);
+  const date = parseLocalDate(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat('pt-PT', {
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(date);
 }
 
 function fullDate(value) {
   if (!value) return '-';
-  const date = new Date(`${value}T00:00:00`);
+  const date = parseLocalDate(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('pt-PT', {
-    timeZone: 'Europe/Lisbon',
+    timeZone: 'UTC',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -151,19 +156,37 @@ function toOffsetDateTime(datetimeLocal) {
   return date.toISOString();
 }
 
-function todayString() {
+function todayString(timeZone) {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(now);
+  const value = type => parts.find(part => part.type === type)?.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
 }
 
 function addDays(value, days) {
-  const date = new Date(`${value}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const date = parseLocalDate(value);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatLocalDate(date);
 }
 
 function tomorrowString() {
   return addDays(todayString(), 1);
+}
+
+function parseLocalDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+  if (!match) return new Date(NaN);
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+}
+
+function formatLocalDate(date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 
 function datetimeLocalValue(value) {

@@ -95,7 +95,13 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("Horas extra necessárias");
         assertThat(admin).contains("jantes acima do target máximo", "Plano dentro do target máximo");
         assertThat(admin).contains("metric overtime", "'yes' : 'no'");
-        assertThat(admin).contains("Dia anterior", "Amanhã", "Dia seguinte", "Atualizar");
+        assertThat(admin).contains("Dia anterior", "Dia seguinte", "Atualizar");
+        assertThat(admin).doesNotContain("data-date-set", "Amanhã");
+        assertThat(admin).contains("state.date = selectedTodayString();");
+        assertThat(admin).contains("function activeSiteTimezone()", "Europe/Luxembourg", "Europe/Lisbon");
+        assertThat(admin).contains("const from = pp.addDays(state.date, 1);", "const to = pp.addDays(state.date, 3);");
+        assertThat(admin).contains("function upcomingPlans()", "[1, 2, 3].map(offset => pp.addDays(state.date, offset))");
+        assertThat(admin).contains("data-next-plan-date", "state.date = button.dataset.nextPlanDate", "document.querySelector('#dashboard-date').value = state.date");
         assertThat(admin).contains("Próximos dias", "Pedidos do dia", "Não existem pedidos para os filtros selecionados.");
         assertThat(admin).contains("filter-driver", "filter-customer", "filter-status", "filter-wheel-type", "filter-confidence", "filter-risk", "clear-plan-filters");
         assertThat(admin).contains("customerId", "wheelType", "availability", "risk");
@@ -171,6 +177,11 @@ class FrontendStaticFlowTest {
         assertThat(api).contains("X-Correlation-ID", "credentials", "application/problem+json");
         assertThat(api).contains("fetch(path");
         assertThat(api).contains("response.status === 204");
+        assertThat(api).contains("function parseLocalDate(value)");
+        assertThat(api).contains("Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)");
+        assertThat(api).contains("date.setUTCDate(date.getUTCDate() + days)");
+        assertThat(api).contains("timeZone: timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone");
+        assertThat(api).contains("timeZone: 'UTC'");
         assertThat(api).contains("details");
         assertThat(api).doesNotContain("localhost:8082");
     }

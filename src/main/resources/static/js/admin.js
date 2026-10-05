@@ -7,7 +7,7 @@ const ADMIN_VIEW_REDIRECTS = {
 };
 
 const state = {
-  date: pp.tomorrowString(),
+  date: null,
   view: normalizedViewFromLocation(),
   activeSite: null,
   dashboard: null,
@@ -75,15 +75,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const current = api.requireRole('ADMIN');
   if (!current) return;
   renderActiveSite(current.user?.productionSite);
+  state.date = selectedTodayString();
   document.querySelector('#logout').addEventListener('click', api.logout);
   document.querySelector('#dashboard-date').value = state.date;
   document.querySelector('#dashboard-date').addEventListener('change', async event => {
-    state.date = event.target.value || pp.todayString();
+    state.date = event.target.value || selectedTodayString();
     await loadAdminData();
     render();
   });
   document.querySelector('#today-button').addEventListener('click', async () => {
-    state.date = pp.todayString();
+    state.date = selectedTodayString();
     document.querySelector('#dashboard-date').value = state.date;
     await loadAdminData();
     render();
@@ -123,6 +124,14 @@ function renderActiveSite(site) {
     return;
   }
   element.innerHTML = `Unidade ativa: ${pp.escapeHtml(site.displayName || site.code)} <strong>${pp.escapeHtml(site.code)}</strong>`;
+}
+
+function activeSiteTimezone() {
+  return state.activeSite?.timezone || (state.activeSite?.code === 'LUX' ? 'Europe/Luxembourg' : 'Europe/Lisbon');
+}
+
+function selectedTodayString() {
+  return pp.todayString(activeSiteTimezone());
 }
 
 function defaultAdminView() {
@@ -166,8 +175,8 @@ async function loadAdminData() {
 }
 
 async function loadPlanningData() {
-  const from = pp.addDays(state.date, -2);
-  const to = pp.addDays(state.date, 7);
+  const from = pp.addDays(state.date, 1);
+  const to = pp.addDays(state.date, 3);
   let planningError = null;
   let loadedAnyPlanningData = false;
 
@@ -372,7 +381,14 @@ function planCard(plan) {
     <p>Total: ${plan.totalPlanned} jantes · ${wheelSummary(plan.wheelQuantities)}</p>
     <p>${plan.totalCompleted} concluídas · ${plan.totalRemaining} pendentes</p>
     <p class="muted">Mín. ${plan.minimumDailyTarget} · Máx. ${plan.regularDailyCapacity}</p>
+    <button type="button" class="secondary" data-next-plan-date="${pp.escapeHtml(plan.planningDate)}">Ver este dia</button>
   </article>`;
+}
+
+function upcomingPlans() {
+  const expectedDates = [1, 2, 3].map(offset => pp.addDays(state.date, offset));
+  const plansByDate = new Map((state.productionPlans || []).map(plan => [plan.planningDate, plan]));
+  return expectedDates.map(date => plansByDate.get(date)).filter(Boolean);
 }
 
 function bindPlanningNavigation() {
@@ -385,8 +401,8 @@ function bindPlanningNavigation() {
     await loadAdminData();
     render();
   }));
-  document.querySelectorAll('[data-date-set]').forEach(button => button.addEventListener('click', async () => {
-    state.date = button.dataset.dateSet;
+  document.querySelectorAll('[data-next-plan-date]').forEach(button => button.addEventListener('click', async () => {
+    state.date = button.dataset.nextPlanDate;
     document.querySelector('#dashboard-date').value = state.date;
     await loadAdminData();
     render();
@@ -829,6 +845,7 @@ function renderDashboard() {
   if (!d) return;
   const summaryPlan = dailySummaryPlan(d);
   const items = summaryPlan?.lines || summaryPlan?.items || [];
+  const futurePlans = upcomingPlans();
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
       <div class="section-header">
@@ -838,8 +855,6 @@ function renderDashboard() {
         </div>
         <div class="actions">
           <button type="button" class="secondary" data-date-nav="-1">Dia anterior</button>
-          <button type="button" class="secondary" data-date-set="${pp.todayString()}">Hoje</button>
-          <button type="button" class="secondary" data-date-set="${pp.tomorrowString()}">Amanhã</button>
           <button type="button" class="secondary" data-date-nav="1">Dia seguinte</button>
           <button id="planning-refresh" class="secondary" type="button" ${state.busy.refresh ? 'disabled' : ''}>${state.busy.refresh ? 'A atualizar...' : 'Atualizar'}</button>
           <button id="planning-recalculate" type="button" ${state.busy.recalculate ? 'disabled' : ''}>${state.busy.recalculate ? 'A recalcular...' : 'Recalcular'}</button>
@@ -864,7 +879,7 @@ function renderDashboard() {
     </section>
     <section class="panel">
       <div class="section-header"><h2>Próximos dias</h2></div>
-      <div class="window-grid">${state.productionPlans.length ? state.productionPlans.map(planCard).join('') : '<p class="muted">Sem planos futuros para apresentar.</p>'}</div>
+      <div class="window-grid">${futurePlans.length ? futurePlans.map(planCard).join('') : '<p class="muted">Sem planos futuros para apresentar.</p>'}</div>
     </section>
   `;
   bindDashboardActions();
