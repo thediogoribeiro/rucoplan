@@ -16,7 +16,7 @@ public class ProductionRuntimeDiagnostics {
     private static final Logger LOGGER = LoggerFactory.getLogger(ProductionRuntimeDiagnostics.class);
 
     @Bean
-    CommandLineRunner productionRuntimeDiagnostics(
+    CommandLineRunner productionRuntimeDiagnosticsRunner(
             PasswordEncoder passwordEncoder,
             UserDetailsService userDetailsService,
             @Value("${app.auth.mode:}") String authMode,

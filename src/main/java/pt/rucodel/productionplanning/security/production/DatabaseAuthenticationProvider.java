@@ -5,7 +5,11 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
@@ -28,12 +32,15 @@ public class DatabaseAuthenticationProvider implements AuthenticationProvider {
     private final ApplicationUserRepository users;
     private final PasswordEncoder passwordEncoder;
     private final ProductionSiteService productionSites;
+    private final AuthenticationManager authenticationManager;
 
     public DatabaseAuthenticationProvider(ApplicationUserRepository users, PasswordEncoder passwordEncoder,
-                                          ProductionSiteService productionSites) {
+                                          ProductionSiteService productionSites,
+                                          @Qualifier("databaseAuthenticationManager") AuthenticationManager authenticationManager) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.productionSites = productionSites;
+        this.authenticationManager = authenticationManager;
     }
 
     @Override
@@ -85,6 +92,18 @@ public class DatabaseAuthenticationProvider implements AuthenticationProvider {
                     correlationId(), normalizedUsername);
             throw new BadCredentialsException("Invalid credentials");
         }
+        LOGGER.info("auth.login.authenticationManager correlationId={} usernameNormalized={} result=START",
+                correlationId(), normalizedUsername);
+        try {
+            authenticationManager.authenticate(
+                    UsernamePasswordAuthenticationToken.unauthenticated(normalizedUsername, request.password()));
+            LOGGER.info("auth.login.authenticationManager correlationId={} usernameNormalized={} result=SUCCESS",
+                    correlationId(), normalizedUsername);
+        } catch (AuthenticationException ex) {
+            LOGGER.info("auth.login.authenticationManager correlationId={} usernameNormalized={} failureReason=AUTHENTICATION_PROVIDER_ERROR outcome=FAILURE",
+                    correlationId(), normalizedUsername);
+            throw new BadCredentialsException("Invalid credentials", ex);
+        }
         LOGGER.info("auth.login.authenticatedAccount.create correlationId={} usernameNormalized={} result=START",
                 correlationId(), normalizedUsername);
         LOGGER.info("auth.login.result correlationId={} usernameNormalized={} userFound=true active=true failureReason=NONE outcome=SUCCESS",
@@ -109,5 +128,15 @@ public class DatabaseAuthenticationProvider implements AuthenticationProvider {
     private String correlationId() {
         String value = MDC.get("correlationId");
         return value == null || value.isBlank() ? "unavailable" : value;
+    }
+
+    @Override
+    public boolean usesAuthenticationManager() {
+        return true;
+    }
+
+    @Override
+    public String userSource() {
+        return "DATABASE";
     }
 }

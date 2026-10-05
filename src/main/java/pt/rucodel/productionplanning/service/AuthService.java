@@ -35,8 +35,10 @@ public class AuthService {
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
         String normalizedUsername = UsernameNormalizer.normalize(request.username());
-        LOGGER.info("auth.login.service.enter correlationId={} usernameNormalized={} authenticationProvider={} authenticationManager=NOT_USED_CUSTOM_PROVIDER session=STATELESS_TOKEN",
-                correlationId(), normalizedUsername, authenticationProvider.getClass().getSimpleName());
+        LOGGER.info("auth.login.service.enter correlationId={} usernameNormalized={} authenticationProvider={} authenticationManager={} userSource={} session=STATELESS_TOKEN",
+                correlationId(), normalizedUsername, authenticationProvider.getClass().getSimpleName(),
+                authenticationProvider.usesAuthenticationManager() ? "USED" : "NOT_USED_CUSTOM_PROVIDER",
+                authenticationProvider.userSource());
         AuthenticatedAccount account = authenticationProvider.authenticate(request);
         LOGGER.info("auth.login.authenticatedAccount.created correlationId={} usernameNormalized={} result=SUCCESS",
                 correlationId(), normalizedUsername);

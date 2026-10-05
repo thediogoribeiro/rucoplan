@@ -8,4 +8,12 @@ public interface AuthenticationProvider {
     AuthenticatedAccount authenticate(LoginRequest request);
 
     ProductionSiteEntity requireSite(AuthenticatedAccount account, ProductionSiteCode siteCode);
+
+    default boolean usesAuthenticationManager() {
+        return false;
+    }
+
+    default String userSource() {
+        return "UNKNOWN";
+    }
 }

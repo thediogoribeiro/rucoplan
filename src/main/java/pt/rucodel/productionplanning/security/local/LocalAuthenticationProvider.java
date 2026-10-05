@@ -1,6 +1,7 @@
 package pt.rucodel.productionplanning.security.local;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.stereotype.Service;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
@@ -15,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 @Service
+@Profile("!production")
 @ConditionalOnProperty(name = "app.auth.mode", havingValue = "LOCAL", matchIfMissing = true)
 public class LocalAuthenticationProvider implements AuthenticationProvider {
     private final LocalAuthenticationProperties properties;
@@ -42,5 +44,10 @@ public class LocalAuthenticationProvider implements AuthenticationProvider {
     @Override
     public ProductionSiteEntity requireSite(AuthenticatedAccount account, ProductionSiteCode siteCode) {
         return productionSites.requireActive(siteCode);
+    }
+
+    @Override
+    public String userSource() {
+        return "LOCAL";
     }
 }
