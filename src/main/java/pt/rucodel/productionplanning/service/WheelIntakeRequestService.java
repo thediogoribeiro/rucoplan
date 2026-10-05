@@ -58,6 +58,7 @@ public class WheelIntakeRequestService {
     private final WheelQuantityService wheelQuantityService;
     private final PublicCodeService publicCodes;
     private final ProductionSiteService productionSites;
+    private final StatusHistoryActorService statusActors;
     private final ZoneId businessZone;
     private final LocalTime overnightEndTime;
 
@@ -68,6 +69,7 @@ public class WheelIntakeRequestService {
                                      WheelQuantityService wheelQuantityService,
                                      PublicCodeService publicCodes,
                                      ProductionSiteService productionSites,
+                                     StatusHistoryActorService statusActors,
                                      AppProperties appProperties,
                                      @org.springframework.beans.factory.annotation.Value("${app.planning.overnight-end-time:06:00}") String overnightEndTime) {
         this.requests = requests;
@@ -82,6 +84,7 @@ public class WheelIntakeRequestService {
         this.wheelQuantityService = wheelQuantityService;
         this.publicCodes = publicCodes;
         this.productionSites = productionSites;
+        this.statusActors = statusActors;
         this.businessZone = ZoneId.of(appProperties.timezone());
         this.overnightEndTime = LocalTime.parse(overnightEndTime);
     }
@@ -193,7 +196,7 @@ public class WheelIntakeRequestService {
             entity.setArrivalConfirmationSource("MANUAL_FACTORY_INTAKE");
         }
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        recordStatus(saved, null, saved.getLifecycleStatus(), user.id(), user.actorLabel(),
+        recordStatus(saved, null, saved.getLifecycleStatus(), statusActors.authenticatedActorId(user), user.actorLabel(),
                 alreadyAtFactory ? "Pedido manual criado com chegada física confirmada." : "Pedido manual comunicado.");
         recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", user.actorLabel(), "Manual request created.");
@@ -227,7 +230,8 @@ public class WheelIntakeRequestService {
                 actor
         );
         WheelIntakeRequestEntity saved = requests.save(entity);
-        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, actor, "Pedido comunicado pelo agente WhatsApp.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED,
+                statusActors.technicalActorId("WHATSAPP_AGENT", actor), actor, "Pedido comunicado pelo agente WhatsApp.");
         recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", actor, "Request created from WhatsApp agent.");
         logCommunicatedRequest(saved);
@@ -271,7 +275,8 @@ public class WheelIntakeRequestService {
         entity.setFactoryDropoffSlot(dropoffSlot);
         entity.setFactoryPickupSlot(pickupSlot);
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, "WHATSAPP", "Pedido comunicado pelo WhatsApp.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED,
+                statusActors.technicalActorId("WHATSAPP", "WhatsApp"), "WHATSAPP", "Pedido comunicado pelo WhatsApp.");
         recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", "WHATSAPP", "Request created from WhatsApp.");
         logCommunicatedRequest(saved);
@@ -370,7 +375,8 @@ public class WheelIntakeRequestService {
         entity.setFactoryDropoffSlot(dropoffSlot);
         entity.setFactoryPickupSlot(pickupSlot);
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, null, "TELEGRAM", "Pedido comunicado pelo bot Telegram.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED,
+                statusActors.technicalActorId("TELEGRAM", "Telegram"), "TELEGRAM", "Pedido comunicado pelo bot Telegram.");
         recalculationService.markCurrentAndFuturePlans(saved.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", "TELEGRAM", "Request created from Telegram bot.");
         logCommunicatedRequest(saved);
@@ -564,7 +570,8 @@ public class WheelIntakeRequestService {
 
     private RequestResponse persistCreated(WheelIntakeRequestEntity entity, AuthenticatedUser user) {
         WheelIntakeRequestEntity saved = requests.saveAndFlush(entity);
-        recordStatus(saved, null, LifecycleStatus.COMMUNICATED, user.id(), user.actorLabel(), "Pedido comunicado.");
+        recordStatus(saved, null, LifecycleStatus.COMMUNICATED,
+                statusActors.authenticatedActorId(user), user.actorLabel(), "Pedido comunicado.");
         recalculationService.markCurrentAndFuturePlans(entity.getProductionSite());
         auditService.record(null, saved.getId(), "REQUEST_CREATED", user.actorLabel(), "Request created.");
         logCommunicatedRequest(saved);
@@ -598,6 +605,7 @@ public class WheelIntakeRequestService {
             throw new InvalidRequestException("Customer is required.");
         }
         requireCustomerSite(site, customer, pendingCustomer);
+        validateWheelQuantitiesForSite(site, quantities);
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
         entity.setProductionSite(site);
         entity.setRequestCode(publicCodes.newRequestCode());
@@ -643,7 +651,13 @@ public class WheelIntakeRequestService {
             entity.setCustomerNameSnapshot(customer.getName());
         }
         if (update.wheelQuantities() != null || update.expectedWheelQuantity() != null) {
-            entity.replaceWheelQuantities(wheelQuantityService.normalize(update.wheelQuantities(), update.expectedWheelQuantity()));
+            Map<WheelType, Integer> previous = entity.wheelQuantityMap();
+            Map<WheelType, Integer> updated = wheelQuantityService.normalize(update.wheelQuantities(), update.expectedWheelQuantity());
+            validateWheelQuantitiesForSite(entity.getProductionSite(), updated);
+            validateQuantityCorrection(entity, updated);
+            entity.replaceWheelQuantitiesPreservingCompleted(updated);
+            auditService.record(null, entity.getId(), "REQUEST_QUANTITY_CORRECTED", actor,
+                    "Wheel quantities corrected from " + quantitySummary(previous) + " to " + quantitySummary(updated) + ".");
         }
         entity.setExpectedFactoryDropOffWindowStart(first(update.expectedFactoryDropOffWindowStart(), entity.getExpectedFactoryDropOffWindowStart()));
         entity.setExpectedFactoryDropOffWindowEnd(first(update.expectedFactoryDropOffWindowEnd(), entity.getExpectedFactoryDropOffWindowEnd()));
@@ -742,7 +756,7 @@ public class WheelIntakeRequestService {
         }
         entity.setLifecycleStatus(newStatus);
         entity.setUpdatedBy(user.actorLabel());
-        recordStatus(entity, previous, newStatus, user.id(), user.actorLabel(), reason);
+        recordStatus(entity, previous, newStatus, statusActors.authenticatedActorId(user), user.actorLabel(), reason);
         auditService.record(null, entity.getId(), "STATUS_CHANGED", user.actorLabel(),
                 "Status changed from " + previous + " to " + newStatus + ".");
     }
@@ -787,6 +801,33 @@ public class WheelIntakeRequestService {
                 throw new InvalidRequestException("The factory pickup window must not finish before the expected factory drop-off window.");
             }
         }
+    }
+
+    private void validateWheelQuantitiesForSite(ProductionSiteEntity site, Map<WheelType, Integer> quantities) {
+        if (site != null
+                && site.getCode() == ProductionSiteCode.LUX
+                && quantities.getOrDefault(WheelType.BIPARTITE, 0) > 0) {
+            throw new InvalidRequestException("LUX_BIPARTITE_NOT_ALLOWED",
+                    "A unidade do Luxemburgo não processa jantes bipartidas.");
+        }
+    }
+
+    private void validateQuantityCorrection(WheelIntakeRequestEntity entity, Map<WheelType, Integer> updated) {
+        for (WheelType type : WheelType.values()) {
+            int completed = entity.completedWheelQuantity(type);
+            int newQuantity = updated.getOrDefault(type, 0);
+            if (newQuantity < completed) {
+                throw new InvalidRequestException("REQUEST_QUANTITY_BELOW_COMPLETED",
+                        "A quantidade corrigida de " + type.label()
+                                + " não pode ser inferior à quantidade já concluída.");
+            }
+        }
+    }
+
+    private String quantitySummary(Map<WheelType, Integer> quantities) {
+        return "BIPARTITE=" + quantities.getOrDefault(WheelType.BIPARTITE, 0)
+                + ", WASHED=" + quantities.getOrDefault(WheelType.WASHED, 0)
+                + ", NORMAL=" + quantities.getOrDefault(WheelType.NORMAL, 0);
     }
 
     private OffsetDateTime first(OffsetDateTime preferred, OffsetDateTime fallback) {

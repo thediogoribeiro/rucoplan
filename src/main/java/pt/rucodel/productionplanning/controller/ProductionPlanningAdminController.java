@@ -2,7 +2,7 @@ package pt.rucodel.productionplanning.controller;
 
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
-import pt.rucodel.productionplanning.domain.GenerationTrigger;
+import pt.rucodel.productionplanning.domain.*;
 import pt.rucodel.productionplanning.dto.*;
 import pt.rucodel.productionplanning.security.CurrentUserService;
 import pt.rucodel.productionplanning.service.MultiDayProductionPlanningService;
@@ -32,8 +32,15 @@ public class ProductionPlanningAdminController {
     }
 
     @GetMapping("/production-plans/{date}")
-    public DailyProductionPlanResponse getPlan(@PathVariable LocalDate date) {
-        return productionPlanning.getOrGenerate(currentUserService.requireUser().productionSiteCode(), date);
+    public DailyProductionPlanResponse getPlan(@PathVariable LocalDate date,
+                                               @RequestParam(required = false) String driver,
+                                               @RequestParam(required = false) java.util.UUID customerId,
+                                               @RequestParam(required = false) LifecycleStatus status,
+                                               @RequestParam(required = false) WheelType wheelType,
+                                               @RequestParam(required = false) AvailabilityClassification availability,
+                                               @RequestParam(required = false) RiskClassification risk) {
+        return productionPlanning.getOrGenerate(currentUserService.requireUser().productionSiteCode(), date,
+                driver, customerId, status, wheelType, availability, risk);
     }
 
     @PostMapping("/production-plans/{date}/recalculate")

@@ -9,6 +9,7 @@ public record CustomerRequest(
         @NotBlank String name,
         String taxIdentifier,
         String countryCode,
+        String countryName,
         String locality,
         Boolean active,
         Long version

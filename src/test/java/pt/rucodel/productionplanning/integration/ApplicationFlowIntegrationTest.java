@@ -8,12 +8,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.domain.DriverProductionSiteAssociationSource;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
+import pt.rucodel.productionplanning.domain.WheelType;
 import pt.rucodel.productionplanning.entity.*;
 import pt.rucodel.productionplanning.repository.*;
 import pt.rucodel.productionplanning.service.ProductionSiteService;
@@ -50,16 +52,22 @@ class ApplicationFlowIntegrationTest {
     @Autowired ApplicationUserSiteRepository userSites;
     @Autowired DriverProductionSiteRepository driverSites;
     @Autowired ProductionSiteService productionSites;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     private DriverEntity driverOne;
     private DriverEntity driverTwo;
     private CustomerReferenceEntity customerOne;
     private CustomerReferenceEntity customerTwo;
+    private CustomerReferenceEntity luxCustomer;
     private ProductionSiteEntity portugal;
+    private ProductionSiteEntity luxembourg;
     private LocalDate date;
 
     @BeforeEach
     void setUp() {
+        jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS customer_number_seq START WITH 1000 INCREMENT BY 1");
+        jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS customer_code_seq START WITH 1 INCREMENT BY 1");
+        jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS driver_code_seq START WITH 1 INCREMENT BY 1");
         planItems.deleteAll();
         plans.deleteAll();
         history.deleteAll();
@@ -75,17 +83,23 @@ class ApplicationFlowIntegrationTest {
 
         date = LocalDate.of(2026, 9, 2);
         portugal = productionSites.requireByCode(ProductionSiteCode.PT);
+        luxembourg = productionSites.requireByCode(ProductionSiteCode.LUX);
         driverOne = drivers.save(driver("D001", "João Martins"));
         driverTwo = drivers.save(driver("D002", "Marta Silva"));
         productionSites.ensureDriverAssociation(driverOne, portugal, DriverProductionSiteAssociationSource.ADMIN, "TEST");
         productionSites.ensureDriverAssociation(driverTwo, portugal, DriverProductionSiteAssociationSource.ADMIN, "TEST");
+        productionSites.ensureDriverAssociation(driverOne, luxembourg, DriverProductionSiteAssociationSource.ADMIN, "TEST");
         customerOne = customers.save(customer("C1001", "Oficina Central Braga"));
         customerTwo = customers.save(customer("C1002", "Auto Reparadora Norte"));
+        luxCustomer = customers.save(customer(luxembourg, "L1001", "Lux Wheels"));
         ApplicationUserEntity admin = users.save(user("admin", "Administrador", UserRole.ADMIN, null));
+        ApplicationUserEntity luxAdmin = users.save(user("luxadmin", "Administrador LUX", UserRole.ADMIN, null));
         ApplicationUserEntity userOne = users.save(user("driver1", "João Martins", UserRole.DRIVER, driverOne));
         ApplicationUserEntity userTwo = users.save(user("driver2", "Marta Silva", UserRole.DRIVER, driverTwo));
         productionSites.ensureUserAssociation(admin, portugal, "TEST");
+        productionSites.ensureUserAssociation(luxAdmin, luxembourg, "TEST");
         productionSites.ensureUserAssociation(userOne, portugal, "TEST");
+        productionSites.ensureUserAssociation(userOne, luxembourg, "TEST");
         productionSites.ensureUserAssociation(userTwo, portugal, "TEST");
         settings.save(settings(date, 12, 8));
     }
@@ -185,6 +199,26 @@ class ApplicationFlowIntegrationTest {
     }
 
     @Test
+    void luxRejectsBipartiteQuantitiesAndPortugalStillAcceptsThem() throws Exception {
+        String ptDriverToken = login("driver1", "PT");
+        String luxDriverToken = login("driver1", "LUX");
+
+        mockMvc.perform(post("/api/v1/driver/requests")
+                        .header("Authorization", bearer(ptDriverToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(typedRequestPayload(customerOne.getId().toString())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.wheelQuantities[0].quantity").value(4));
+
+        mockMvc.perform(post("/api/v1/driver/requests")
+                        .header("Authorization", bearer(luxDriverToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(typedRequestPayload(luxCustomer.getId().toString())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("LUX_BIPARTITE_NOT_ALLOWED"));
+    }
+
+    @Test
     void systemDiagnosticsRequireAdminAndAreSanitized() throws Exception {
         String driverToken = login("driver1");
         String adminToken = login("admin");
@@ -251,6 +285,72 @@ class ApplicationFlowIntegrationTest {
     }
 
     @Test
+    void customerCountryNameIsEditablePersistedAndSiteScoped() throws Exception {
+        String adminToken = login("admin", "PT");
+        String luxAdminToken = login("luxadmin", "LUX");
+
+        String createdPt = mockMvc.perform(post("/api/v1/admin/customers")
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Cliente França",
+                                  "taxIdentifier": "FR123",
+                                  "countryName": "França",
+                                  "locality": "Paris",
+                                  "active": true
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.countryName").value("França"))
+                .andReturn().getResponse().getContentAsString();
+
+        String createdLux = mockMvc.perform(post("/api/v1/admin/customers")
+                        .header("Authorization", bearer(luxAdminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Cliente Luxemburgo",
+                                  "taxIdentifier": "LU123",
+                                  "countryName": "Luxemburgo",
+                                  "locality": "Luxemburgo",
+                                  "active": true
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.countryName").value("Luxemburgo"))
+                .andReturn().getResponse().getContentAsString();
+
+        JsonNode pt = objectMapper.readTree(createdPt);
+        JsonNode lux = objectMapper.readTree(createdLux);
+        assertThat(customers.findById(java.util.UUID.fromString(pt.get("id").asText())).orElseThrow().getCountryName())
+                .isEqualTo("França");
+        assertThat(customers.findByIdForSite(ProductionSiteCode.LUX, java.util.UUID.fromString(lux.get("id").asText())))
+                .isPresent();
+        assertThat(customers.findByIdForSite(ProductionSiteCode.PT, java.util.UUID.fromString(lux.get("id").asText())))
+                .isEmpty();
+
+        mockMvc.perform(get("/api/v1/admin/customers")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.name == 'Cliente França')].countryName").value(org.hamcrest.Matchers.contains("França")))
+                .andExpect(jsonPath("$[?(@.name == 'Cliente Luxemburgo')]").isEmpty());
+
+        mockMvc.perform(post("/api/v1/admin/customers")
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Cliente Sem País",
+                                  "countryName": "",
+                                  "active": true
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("CUSTOMER_COUNTRY_REQUIRED"));
+    }
+
+    @Test
     void administratorCanConfirmArrivalQuantityAndProductionStatus() throws Exception {
         String driverToken = login("driver1");
         String adminToken = login("admin");
@@ -313,6 +413,13 @@ class ApplicationFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
+        assertThat(history.findByRequestIdOrderByChangedAtAsc(java.util.UUID.fromString(created.get("id").asText())))
+                .anySatisfy(entry -> {
+                    assertThat(entry.getNewStatus()).isEqualTo(pt.rucodel.productionplanning.domain.LifecycleStatus.AT_FACTORY);
+                    assertThat(entry.getActorUserId()).isNotNull();
+                    assertThat(users.existsById(entry.getActorUserId())).isTrue();
+                });
+
         JsonNode ownArrival = createDriverRequest(driverToken, customerOne, 2);
         mockMvc.perform(post("/api/v1/driver/requests/{id}/arrival", ownArrival.get("id").asText())
                         .header("Authorization", bearer(driverToken))
@@ -355,6 +462,66 @@ class ApplicationFlowIntegrationTest {
                                 }
                                 """.formatted(statusVersion)))
                 .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void administratorCanEditArrivedRequestQuantitiesWithAuditAndCompletedFloor() throws Exception {
+        String driverToken = login("driver1");
+        String adminToken = login("admin");
+        JsonNode created = createDriverRequest(driverToken, customerOne, 10);
+
+        String arrived = mockMvc.perform(post("/api/v1/admin/factory-arrivals/{id}/confirm", created.get("id").asText())
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"actualArrivalAt":"2026-09-02T09:15:00+01:00","version":%d}
+                                """.formatted(created.get("version").asLong())))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        objectMapper.readTree(arrived);
+        long version = requests.findById(java.util.UUID.fromString(created.get("id").asText())).orElseThrow().getVersion();
+        mockMvc.perform(patch("/api/v1/admin/requests/{id}", created.get("id").asText())
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "wheelQuantities": [
+                                    {"type":"BIPARTITE","quantity":0},
+                                    {"type":"WASHED","quantity":0},
+                                    {"type":"NORMAL","quantity":11}
+                                  ],
+                                  "version": %d
+                                }
+                                """.formatted(version)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalQuantity").value(11));
+
+        assertThat(audit.findByProductionSite_CodeOrderByCreatedAtDesc(ProductionSiteCode.PT, org.springframework.data.domain.PageRequest.of(0, 10))
+                .getContent()).anySatisfy(event -> {
+            assertThat(event.getEventType()).isEqualTo("REQUEST_QUANTITY_CORRECTED");
+            assertThat(event.getDetail()).contains("NORMAL=10", "NORMAL=11");
+        });
+
+        WheelIntakeRequestEntity saved = requests.findById(java.util.UUID.fromString(created.get("id").asText())).orElseThrow();
+        saved.addCompletedWheelQuantities(java.util.Map.of(WheelType.NORMAL, 5));
+        saved = requests.saveAndFlush(saved);
+
+        mockMvc.perform(patch("/api/v1/admin/requests/{id}", saved.getId())
+                        .header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "wheelQuantities": [
+                                    {"type":"BIPARTITE","quantity":0},
+                                    {"type":"WASHED","quantity":0},
+                                    {"type":"NORMAL","quantity":4}
+                                  ],
+                                  "version": %d
+                                }
+                                """.formatted(saved.getVersion())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("REQUEST_QUANTITY_BELOW_COMPLETED"));
     }
 
     @Test
@@ -511,11 +678,15 @@ class ApplicationFlowIntegrationTest {
     }
 
     private String login(String username) throws Exception {
+        return login(username, "PT");
+    }
+
+    private String login(String username, String productionSite) throws Exception {
         String response = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"username":"%s","password":"password","productionSite":"PT"}
-                                """.formatted(username)))
+                                {"username":"%s","password":"password","productionSite":"%s"}
+                                """.formatted(username, productionSite)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(response).get("token").asText();
@@ -538,6 +709,16 @@ class ApplicationFlowIntegrationTest {
     private CustomerReferenceEntity customer(String externalId, String name) {
         CustomerReferenceEntity customer = new CustomerReferenceEntity();
         customer.setProductionSite(portugal);
+        return customer(customer, externalId, name);
+    }
+
+    private CustomerReferenceEntity customer(ProductionSiteEntity site, String externalId, String name) {
+        CustomerReferenceEntity customer = new CustomerReferenceEntity();
+        customer.setProductionSite(site);
+        return customer(customer, externalId, name);
+    }
+
+    private CustomerReferenceEntity customer(CustomerReferenceEntity customer, String externalId, String name) {
         customer.setExternalId(externalId);
         customer.setName(name);
         customer.setActive(true);

@@ -115,6 +115,54 @@ class MultiDayPlanningIntegrationTest {
     }
 
     @Test
+    void dailyPlanLookupAppliesCombinedBackendFiltersAndFilteredTotals() {
+        createTargets(0, 300, day);
+        DriverEntity otherDriver = drivers.save(driver("Outro Motorista"));
+        productionSites.ensureDriverAssociation(otherDriver, portugal,
+                DriverProductionSiteAssociationSource.ADMIN, "TEST");
+
+        WheelIntakeRequestEntity normal = typedRequest(driver, customerX, Map.of(WheelType.NORMAL, 10),
+                day, day.plusDays(5), RequestSource.WEB);
+        WheelIntakeRequestEntity washed = typedRequest(otherDriver, customerY, Map.of(WheelType.WASHED, 20),
+                day, day.plusDays(5), RequestSource.WEB);
+
+        planning.recalculate(ProductionSiteCode.PT, day, GenerationTrigger.MANUAL, "TEST");
+
+        DailyProductionPlanResponse all = planning.getOrGenerate(ProductionSiteCode.PT, day);
+        assertThat(all.lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .containsExactlyInAnyOrder(normal.getId(), washed.getId());
+        assertThat(all.totalPlanned()).isEqualTo(30);
+
+        DailyProductionPlanResponse filtered = planning.getOrGenerate(ProductionSiteCode.PT, day,
+                "Motorista", customerX.getId(), LifecycleStatus.AT_FACTORY, WheelType.NORMAL,
+                AvailabilityClassification.CONFIRMED, RiskClassification.ON_TRACK);
+
+        assertThat(filtered.lines()).singleElement()
+                .satisfies(line -> {
+                    assertThat(line.requestId()).isEqualTo(normal.getId());
+                    assertThat(line.customerId()).isEqualTo(customerX.getId());
+                    assertThat(line.driverName()).isEqualTo("Motorista");
+                    assertThat(line.plannedQuantity()).isEqualTo(10);
+                });
+        assertThat(filtered.totalPlanned()).isEqualTo(10);
+        assertThat(filtered.confirmedPlannedQuantity()).isEqualTo(10);
+        assertThat(filtered.unconfirmedPlannedQuantity()).isZero();
+
+        DailyProductionPlanResponse mismatched = planning.getOrGenerate(ProductionSiteCode.PT, day,
+                "Motorista", customerY.getId(), LifecycleStatus.AT_FACTORY, WheelType.NORMAL,
+                AvailabilityClassification.CONFIRMED, RiskClassification.ON_TRACK);
+        assertThat(mismatched.lines()).isEmpty();
+        assertThat(mismatched.totalPlanned()).isZero();
+
+        DailyProductionPlanResponse washedOnly = planning.getOrGenerate(ProductionSiteCode.PT, day,
+                null, null, null, WheelType.WASHED, null, null);
+        assertThat(washedOnly.lines()).singleElement()
+                .extracting(DailyProductionPlanLineResponse::requestId)
+                .isEqualTo(washed.getId());
+        assertThat(washedOnly.totalPlanned()).isEqualTo(20);
+    }
+
+    @Test
     void defaultTargetsAreReducedByHalfOnSaturday() {
         assertThat(targetConfigurations.findAll()).isEmpty();
         LocalDate saturday = LocalDate.of(2099, 9, 12);
@@ -241,6 +289,29 @@ class MultiDayPlanningIntegrationTest {
         assertThat(day24.wheelQuantities()).extracting(WheelQuantityDto::quantity).containsExactly(0, 30, 150);
         assertThat(day25.wheelQuantities()).extracting(WheelQuantityDto::quantity).containsExactly(0, 0, 50);
     }
+
+    @Test
+    void dailyPlanSeparatesConfirmedAndUnconfirmedPlannedQuantities() {
+        createTargets(0, 200, day);
+        WheelIntakeRequestEntity confirmed = request(customerX, 30, day, day, RequestSource.WEB);
+        WheelIntakeRequestEntity unconfirmed = typedRequest(customerY, Map.of(WheelType.NORMAL, 40),
+                day, day, RequestSource.TELEGRAM);
+        unconfirmed.setActualFactoryArrivalAt(null);
+        unconfirmed.setArrivalConfirmedAt(null);
+        unconfirmed.setArrivalConfirmedBy(null);
+        unconfirmed.setArrivalConfirmationSource(null);
+        unconfirmed.setLifecycleStatus(LifecycleStatus.COMMUNICATED);
+        requests.saveAndFlush(unconfirmed);
+
+        DailyProductionPlanResponse plan = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
+
+        assertThat(plan.totalPlanned()).isEqualTo(70);
+        assertThat(plan.confirmedPlannedQuantity()).isEqualTo(30);
+        assertThat(plan.unconfirmedPlannedQuantity()).isEqualTo(40);
+        assertThat(plan.lines()).extracting(DailyProductionPlanLineResponse::requestId)
+                .contains(confirmed.getId(), unconfirmed.getId());
+    }
+
 
     @Test
     void bipartiteDeadlinesAreAdjustedByFifteenBusinessDaysWithoutChangingOtherTypes() {
@@ -719,16 +790,27 @@ class MultiDayPlanningIntegrationTest {
 
     private WheelIntakeRequestEntity typedRequest(CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
                                                   LocalDate availableDate, LocalDate dueDate, RequestSource source) {
-        return typedRequest(customer, quantities, availableDate, "09:00", "10:00", dueDate, "18:00", "19:00", source);
+        return typedRequest(driver, customer, quantities, availableDate, dueDate, source);
+    }
+
+    private WheelIntakeRequestEntity typedRequest(DriverEntity requestDriver, CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                  LocalDate availableDate, LocalDate dueDate, RequestSource source) {
+        return typedRequest(requestDriver, customer, quantities, availableDate, "09:00", "10:00", dueDate, "18:00", "19:00", source);
     }
 
     private WheelIntakeRequestEntity typedRequest(CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
                                                   LocalDate availableDate, String availableStart, String availableEnd,
                                                   LocalDate dueDate, String dueStart, String dueEnd, RequestSource source) {
+        return typedRequest(driver, customer, quantities, availableDate, availableStart, availableEnd, dueDate, dueStart, dueEnd, source);
+    }
+
+    private WheelIntakeRequestEntity typedRequest(DriverEntity requestDriver, CustomerReferenceEntity customer, Map<WheelType, Integer> quantities,
+                                                  LocalDate availableDate, String availableStart, String availableEnd,
+                                                  LocalDate dueDate, String dueStart, String dueEnd, RequestSource source) {
         WheelIntakeRequestEntity entity = new WheelIntakeRequestEntity();
         entity.setProductionSite(portugal);
         entity.setSource(source);
-        entity.setDriver(driver);
+        entity.setDriver(requestDriver);
         entity.setCustomer(customer);
         entity.setCustomerNameSnapshot(customer.getName());
         entity.replaceWheelQuantities(quantities);

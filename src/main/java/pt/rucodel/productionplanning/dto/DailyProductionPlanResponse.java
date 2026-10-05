@@ -32,6 +32,8 @@ public record DailyProductionPlanResponse(
         String closedBy,
         GenerationTrigger generationTrigger,
         long version,
+        int confirmedPlannedQuantity,
+        int unconfirmedPlannedQuantity,
         List<DailyProductionPlanLineResponse> lines
 ) {
     @JsonProperty("items")

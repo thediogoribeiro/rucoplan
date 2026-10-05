@@ -12,6 +12,7 @@ public record CustomerResponse(
         String name,
         String taxIdentifier,
         String countryCode,
+        String countryName,
         String locality,
         String status,
         boolean active,

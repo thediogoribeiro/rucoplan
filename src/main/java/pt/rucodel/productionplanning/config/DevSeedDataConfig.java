@@ -137,10 +137,13 @@ public class DevSeedDataConfig {
 
     private String codeFromExternalId(String prefix, String externalId) {
         Integer suffix = numericSuffix(externalId);
-        if (suffix == null) {
+        if (suffix != null) {
+            return prefix + String.format("%03d", suffix);
+        }
+        if (externalId == null || externalId.isBlank()) {
             return null;
         }
-        return prefix + String.format("%03d", suffix);
+        return prefix + externalId.trim().toUpperCase();
     }
 
     private Integer numericSuffix(String externalId) {
@@ -153,9 +156,7 @@ public class DevSeedDataConfig {
     private DriverEntity driver(String externalId, String name) {
         DriverEntity entity = new DriverEntity();
         entity.setExternalId(externalId);
-        if (externalId != null && externalId.matches("D[0-9]+")) {
-            entity.setDriverCode("MOTOR-" + String.format("%03d", Integer.parseInt(externalId.substring(1))));
-        }
+        entity.setDriverCode(codeFromExternalId("MOTOR-", externalId));
         entity.setName(name);
         entity.setActive(true);
         entity.setCreatedBy("DEV_SEED");

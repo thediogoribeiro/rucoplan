@@ -6,7 +6,9 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import pt.rucodel.productionplanning.domain.DashboardPlanUpdatedEvent;
+import pt.rucodel.productionplanning.domain.DashboardRecalculationEvent;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
+import pt.rucodel.productionplanning.domain.RecalculationStatus;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
@@ -52,6 +54,30 @@ class DashboardSseServiceTest {
         assertThat(service.emitter.sentPayloads.getLast()).contains("production-plan-updated");
         Method method = DashboardSseService.class.getMethod("onDashboardPlanUpdated", DashboardPlanUpdatedEvent.class);
         assertThat(method.getAnnotation(TransactionalEventListener.class).phase()).isEqualTo(TransactionPhase.AFTER_COMMIT);
+    }
+
+    @Test
+    void recalculationStatusEventsAreSentToTheSubscribedSiteOnly() {
+        CountingEmitter portugal = new CountingEmitter();
+        CountingEmitter luxembourg = new CountingEmitter();
+        CountingDashboardSseService service = new CountingDashboardSseService(portugal, luxembourg);
+        service.subscribe(ProductionSiteCode.PT);
+        service.subscribe(ProductionSiteCode.LUX);
+
+        service.onDashboardRecalculation(new DashboardRecalculationEvent(
+                ProductionSiteCode.PT,
+                LocalDate.of(2026, 9, 2),
+                RecalculationStatus.STARTED,
+                "arrival",
+                "cid-1",
+                null
+        ));
+
+        assertThat(portugal.lastPayload())
+                .contains("production-plan-recalculation-started")
+                .contains("PRODUCTION_PLAN_RECALCULATION_STARTED")
+                .contains("cid-1");
+        assertThat(luxembourg.sentPayloadCount()).isEqualTo(1);
     }
 
     @Test
@@ -105,6 +131,14 @@ class DashboardSseServiceTest {
 
         boolean isCompleted() {
             return completed;
+        }
+
+        String lastPayload() {
+            return sentPayloads.getLast();
+        }
+
+        int sentPayloadCount() {
+            return sentPayloads.size();
         }
     }
 

@@ -204,6 +204,41 @@ paths:
           schema:
             type: string
             format: date
+        - in: query
+          name: driver
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: customerId
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            enum: [COMMUNICATED, AT_FACTORY, IN_PRODUCTION, READY_FOR_PICKUP, CANCELLED]
+        - in: query
+          name: wheelType
+          required: false
+          schema:
+            type: string
+            enum: [BIPARTITE, WASHED, NORMAL]
+        - in: query
+          name: availability
+          required: false
+          schema:
+            type: string
+            enum: [CONFIRMED, TENTATIVE, WAITING_FOR_ARRIVAL]
+        - in: query
+          name: risk
+          required: false
+          schema:
+            type: string
+            enum: [ON_TRACK, AT_RISK, OVERDUE, OVER_CAPACITY, MISSING_INFORMATION]
       responses:
         "200":
           description: Daily production plan

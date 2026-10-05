@@ -20,6 +20,10 @@ O formulário permite selecionar um cliente existente ou criar um novo cliente c
 - Localidade;
 - ID RucoFi opcional.
 
+O campo **País** é texto editável e guarda o nome por extenso introduzido pelo utilizador, por exemplo `Portugal`, `Luxemburgo` ou `França`. O valor sugerido vem da unidade ativa: Portugal para `PT` e Luxemburgo para `LUX`. O utilizador pode alterar a sugestão antes de guardar.
+
+`country_code` permanece um campo técnico opcional para compatibilidade com dados e integrações existentes; o formulário administrativo não obriga o utilizador a escrever códigos ISO.
+
 O código RucoPlan do cliente é gerado automaticamente.
 
 ## Motorista
@@ -52,6 +56,12 @@ Todos os pedidos manuais usam o mesmo modelo, targets, calendário, prazos, fech
 ## Auditoria
 
 O backend regista quem criou o pedido, quando, quantidades, cliente, motorista opcional, estado inicial e origem.
+
+O histórico de estados (`request_status_history`) referencia sempre um `app_user` válido quando a ação vem de uma pessoa autenticada. Em autenticação local, se o utilizador local não existir em `app_user`, a aplicação cria uma identidade de auditoria inativa com o mesmo username para cumprir a foreign key sem permitir login por essa conta. Ações automáticas ou de canais como Telegram/WhatsApp usam atores técnicos inativos próprios.
+
+Ao confirmar chegada em **Entrada na Fábrica**, o frontend aguarda a resposta do backend, bloqueia o botão durante a operação e recarrega os dados autoritativos. Em sucesso, o pedido sai de **Entrada na Fábrica**, continua em **Pedidos** e o plano diário passa a usar o estado persistido. Em erro, o pedido permanece visível e a mensagem inclui o correlation ID quando fornecido pela API.
+
+No **Fecho do Turno**, cada fecho parcial ou total também aguarda o backend e recarrega os dados autoritativos. Fechos totais removem a linha dos pendentes; fechos parciais mostram apenas a quantidade restante. O botão fica bloqueado durante a chamada para evitar duplo clique.
 
 ## Endpoint
 

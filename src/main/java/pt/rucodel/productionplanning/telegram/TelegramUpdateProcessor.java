@@ -32,6 +32,8 @@ import java.util.stream.Collectors;
 public class TelegramUpdateProcessor {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/uuuu")
             .withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter DATE_PARSER = DateTimeFormatter.ofPattern("d/M/uuuu")
+            .withResolverStyle(ResolverStyle.STRICT);
     private static final int NOTES_LIMIT = 1000;
 
     private final TelegramInboundUpdateRepository inboundUpdates;
@@ -603,8 +605,7 @@ public class TelegramUpdateProcessor {
 
                     Cliente: %s
                     Número de cliente RucoPlan: %d""".formatted(customer.getName(), customer.getCustomerNumber()));
-            saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_BIPARTITE_QUANTITY,
-                    conversationFlow.quantityQuestion(WheelType.BIPARTITE));
+            advanceToFirstQuantityQuestion(conversation, draft, chatId);
             return;
         }
         if (normalized.equals("customer_new_correct") || normalized.equals("corrigir dados") || normalized.equals("corrigir") || normalized.equals("2")) {
@@ -665,8 +666,24 @@ public class TelegramUpdateProcessor {
         customerResolution.clearCandidates(conversation);
         drafts.save(draft);
         botClient.sendMessage(chatId, prefix + customer.getName() + ".");
+        advanceToFirstQuantityQuestion(conversation, draft, chatId);
+    }
+
+    private void advanceToFirstQuantityQuestion(TelegramConversationEntity conversation, TelegramIntakeDraftEntity draft, Long chatId) {
+        if (isLuxembourgDraft(draft)) {
+            draft.setWheelQuantity(WheelType.BIPARTITE, 0);
+            saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_WASHED_QUANTITY,
+                    conversationFlow.quantityQuestion(WheelType.WASHED));
+            return;
+        }
         saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_BIPARTITE_QUANTITY,
                 conversationFlow.quantityQuestion(WheelType.BIPARTITE));
+    }
+
+    private boolean isLuxembourgDraft(TelegramIntakeDraftEntity draft) {
+        return draft != null
+                && draft.getProductionSite() != null
+                && draft.getProductionSite().getCode() == ProductionSiteCode.LUX;
     }
 
     private String customerOptionsText(List<ConversationCustomerCandidateEntity> options) {
@@ -823,13 +840,20 @@ public class TelegramUpdateProcessor {
 
     private void handleQuantity(TelegramConversationEntity conversation, Long chatId, String text, WheelType type,
                                 TelegramConversationState nextState) {
+        TelegramIntakeDraftEntity draft = requireDraft(conversation);
+        if (type == WheelType.BIPARTITE && isLuxembourgDraft(draft)) {
+            draft.setWheelQuantity(WheelType.BIPARTITE, 0);
+            saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_WASHED_QUANTITY,
+                    conversationFlow.quantityQuestion(WheelType.WASHED));
+            return;
+        }
         Integer quantity = conversationFlow.parseQuantity(text);
         if (quantity == null) {
             botClient.sendMessage(chatId, "A quantidade tem de ser um número inteiro maior ou igual a zero.\n\n"
                     + conversationFlow.quantityQuestion(type));
             return;
         }
-        requireDraft(conversation).setWheelQuantity(type, quantity);
+        draft.setWheelQuantity(type, quantity);
         saveAndAdvanceOrSummarise(conversation, nextState,
                 conversationFlow.quantityQuestion(type == WheelType.BIPARTITE ? WheelType.WASHED : WheelType.NORMAL));
     }
@@ -845,11 +869,16 @@ public class TelegramUpdateProcessor {
         draft.setWheelQuantity(WheelType.NORMAL, quantity);
         if (draft.totalWheelQuantity() <= 0) {
             draft.clearWheelQuantities();
+            if (isLuxembourgDraft(draft)) {
+                draft.setWheelQuantity(WheelType.BIPARTITE, 0);
+            }
             drafts.save(draft);
-            conversation.setState(TelegramConversationState.AWAITING_BIPARTITE_QUANTITY);
+            conversation.setState(isLuxembourgDraft(draft)
+                    ? TelegramConversationState.AWAITING_WASHED_QUANTITY
+                    : TelegramConversationState.AWAITING_BIPARTITE_QUANTITY);
             conversations.save(conversation);
             botClient.sendMessage(chatId, "O pedido tem de incluir pelo menos uma jante. Vamos voltar a indicar as quantidades por tipo.\n\n"
-                    + conversationFlow.quantityQuestion(WheelType.BIPARTITE));
+                    + conversationFlow.quantityQuestion(isLuxembourgDraft(draft) ? WheelType.WASHED : WheelType.BIPARTITE));
             return;
         }
         saveAndAdvanceOrSummarise(conversation, TelegramConversationState.AWAITING_FACTORY_DROPOFF_DATE,
@@ -939,7 +968,7 @@ public class TelegramUpdateProcessor {
         if (normalized.equals("corrigir") || normalized.equals("corrigir pedido")) {
             conversation.setState(TelegramConversationState.AWAITING_CORRECTION_FIELD);
             conversations.save(conversation);
-            botClient.sendMessage(chatId, correctionQuestion());
+            botClient.sendMessage(chatId, correctionQuestion(requireDraft(conversation)));
             return;
         }
         if (normalized.equals("cancelar") || normalized.equals("cancelar pedido")) {
@@ -963,6 +992,10 @@ public class TelegramUpdateProcessor {
                 botClient.sendMessage(chatId, conversationFlow.customerQuestion());
             }
             case "2" -> {
+                if (isLuxembourgDraft(draft)) {
+                    botClient.sendMessage(chatId, "O Luxemburgo não processa jantes bipartidas. Escolha outro campo.\n\n" + correctionQuestion(draft));
+                    return;
+                }
                 draft.clearWheelQuantity(WheelType.BIPARTITE);
                 conversation.setState(TelegramConversationState.AWAITING_BIPARTITE_QUANTITY);
                 botClient.sendMessage(chatId, conversationFlow.quantityQuestion(WheelType.BIPARTITE));
@@ -1004,7 +1037,7 @@ public class TelegramUpdateProcessor {
                 conversation.setState(TelegramConversationState.AWAITING_NOTES);
                 botClient.sendMessage(chatId, "9/10 — Alguma nota extra? Escreva a nota ou responda ‘Não’.");
             }
-            default -> botClient.sendMessage(chatId, "Escolha um campo entre 1 e 9.\n\n" + correctionQuestion());
+            default -> botClient.sendMessage(chatId, "Escolha um campo entre 1 e 9.\n\n" + correctionQuestion(draft));
         }
         drafts.save(draft);
         conversations.save(conversation);
@@ -1112,7 +1145,7 @@ public class TelegramUpdateProcessor {
     private boolean complete(TelegramIntakeDraftEntity draft) {
         return draft.getProductionSite() != null
                 && (draft.getCustomer() != null || draft.getCustomerRegistrationRequest() != null)
-                && draft.wheelQuantity(WheelType.BIPARTITE) != null
+                && (isLuxembourgDraft(draft) || draft.wheelQuantity(WheelType.BIPARTITE) != null)
                 && draft.wheelQuantity(WheelType.WASHED) != null
                 && draft.wheelQuantity(WheelType.NORMAL) != null
                 && draft.totalWheelQuantity() > 0
@@ -1138,7 +1171,11 @@ public class TelegramUpdateProcessor {
 
     private LocalDate parseDate(String text) {
         try {
-            return LocalDate.parse(text.trim(), DATE_FORMATTER);
+            String value = text == null ? "" : text.trim();
+            if (!value.matches("\\d{1,2}/\\d{1,2}/\\d{4}")) {
+                return null;
+            }
+            return LocalDate.parse(value, DATE_PARSER);
         } catch (DateTimeParseException | NullPointerException ex) {
             return null;
         }
@@ -1225,6 +1262,23 @@ public class TelegramUpdateProcessor {
 
                 1 — Cliente
                 2 — Jantes bipartidas
+                3 — Jantes lavadas
+                4 — Jantes normais
+                5 — Data de entrada na fábrica
+                6 — Horário de entrada na fábrica
+                7 — Data em que devem estar prontas
+                8 — Horário de levantamento na fábrica
+                9 — Notas""";
+    }
+
+    private String correctionQuestion(TelegramIntakeDraftEntity draft) {
+        if (!isLuxembourgDraft(draft)) {
+            return correctionQuestion();
+        }
+        return """
+                Que campo pretende corrigir?
+
+                1 — Cliente
                 3 — Jantes lavadas
                 4 — Jantes normais
                 5 — Data de entrada na fábrica

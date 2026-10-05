@@ -40,13 +40,13 @@ class FrontendStaticFlowTest {
         String print = Files.readString(STATIC.resolve("js/print-plan.js"));
 
         String nav = adminHtml.substring(adminHtml.indexOf("<nav class=\"nav\""), adminHtml.indexOf("</nav>"));
-        assertThat(nav).contains("Plano Diário", "Entrada na Fábrica", "Fecho do Turno", "Planeamento de Produção", "Targets", "Novo Pedido", "Pedidos", "Motoristas", "Clientes", "Definições");
-        assertThat(nav.indexOf("Plano Diário")).isLessThan(nav.indexOf("Entrada na Fábrica"));
+        assertThat(nav).contains("Plano Diário", "Novo Pedido", "Entrada na Fábrica", "Fecho do Turno", "Targets", "Pedidos", "Motoristas", "Clientes", "Definições");
+        assertThat(nav).doesNotContain("Planeamento de Produção", "#planning");
+        assertThat(nav.indexOf("Plano Diário")).isLessThan(nav.indexOf("Novo Pedido"));
+        assertThat(nav.indexOf("Novo Pedido")).isLessThan(nav.indexOf("Entrada na Fábrica"));
         assertThat(nav.indexOf("Entrada na Fábrica")).isLessThan(nav.indexOf("Fecho do Turno"));
-        assertThat(nav.indexOf("Fecho do Turno")).isLessThan(nav.indexOf("Planeamento de Produção"));
-        assertThat(nav.indexOf("Planeamento de Produção")).isLessThan(nav.indexOf("Targets"));
-        assertThat(nav.indexOf("Targets")).isLessThan(nav.indexOf("Novo Pedido"));
-        assertThat(nav.indexOf("Novo Pedido")).isLessThan(nav.indexOf("Pedidos"));
+        assertThat(nav.indexOf("Fecho do Turno")).isLessThan(nav.indexOf("Targets"));
+        assertThat(nav.indexOf("Targets")).isLessThan(nav.indexOf("Pedidos"));
         assertThat(nav.indexOf("Pedidos")).isLessThan(nav.indexOf("Motoristas"));
         assertThat(nav.indexOf("Motoristas")).isLessThan(nav.indexOf("Clientes"));
         assertThat(nav.indexOf("Clientes")).isLessThan(nav.indexOf("Definições"));
@@ -55,8 +55,11 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("settings/diagnostics", "settings/audit", "settings/capacity");
         assertThat(admin).contains("renderNewRequest", "Novo Pedido", "/api/v1/admin/requests/manual");
         assertThat(admin).contains("Motorista, se aplicável", "Sem motorista", "As jantes já estão na fábrica?");
+        assertThat(admin).contains("newCustomerCountryName", "defaultCountryName()", "countryName: form.newCustomerCountryName.value");
+        assertThat(admin).contains("name=\"countryName\"", "countryName: form.countryName.value.trim()");
+        assertThat(admin).doesNotContain("newCustomerCountryCode");
         assertThat(admin).contains("MANUAL", "WhatsApp", "sourceLabel");
-        assertThat(admin).contains("diagnostics: 'settings/diagnostics'", "audit: 'settings/audit'", "capacity: 'settings/capacity'");
+        assertThat(admin).contains("diagnostics: 'settings/diagnostics'", "audit: 'settings/audit'", "capacity: 'settings/capacity'", "planning: 'dashboard'");
         assertThat(admin).contains("Definições &gt;", "settings-subnav");
         assertThat(admin).contains("Diagnóstico do Sistema", "Auditoria", "Capacidade");
         assertThat(admin).contains("Em construção");
@@ -93,6 +96,11 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("jantes acima do target máximo", "Plano dentro do target máximo");
         assertThat(admin).contains("metric overtime", "'yes' : 'no'");
         assertThat(admin).contains("Dia anterior", "Amanhã", "Dia seguinte", "Atualizar");
+        assertThat(admin).contains("Próximos dias", "Pedidos do dia", "Não existem pedidos para os filtros selecionados.");
+        assertThat(admin).contains("filter-driver", "filter-customer", "filter-status", "filter-wheel-type", "filter-confidence", "filter-risk", "clear-plan-filters");
+        assertThat(admin).contains("customerId", "wheelType", "availability", "risk");
+        assertThat(admin).contains("await loadPlanningData();", "renderDashboard();");
+        assertThat(admin).doesNotContain("renderProductionPlanning", "renderPlanByWindow", "filterItems(");
         assertThat(admin).contains("Existem targets mais recentes");
         assertThat(admin).contains("remainingQuantity");
         assertThat(admin).contains("/api/v1/admin/requests");
@@ -106,6 +114,7 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("productionLineVersion");
         assertThat(admin).contains("/api/v1/admin/factory-arrivals?status=COMMUNICATED");
         assertThat(admin).contains("Confirmar chegada");
+        assertThat(admin).contains("state.busy.arrival", "A confirmar...", "operationError('Não foi possível confirmar a chegada à fábrica.'");
         assertThat(admin).contains("Chegada por confirmar", "requestLifecycleStatus");
         assertThat(admin).doesNotContain("data-status");
         assertThat(admin).doesNotContain("/api/v1/admin/requests/${id}/status");
@@ -122,6 +131,9 @@ class FrontendStaticFlowTest {
         assertThat(admin).doesNotContain("http://localhost:8082");
         assertThat(admin).doesNotContain("https://localhost:8082");
         assertThat(admin).contains("dashboard-connected", "production-plan-updated", "document.visibilityState === 'visible'");
+        assertThat(admin).contains("production-plan-recalculation-started", "production-plan-recalculation-completed", "production-plan-recalculation-failed");
+        assertThat(admin).contains("O plano está a ser recalculado com os dados mais recentes.");
+        assertThat(admin).contains("Não foi possível recalcular o plano.").contains("renderAutoRecalculationNotice");
         assertThat(admin).contains("REST fallback errors are handled by the normal screen actions");
         assertThat(admin).contains("refreshAdminData()");
         assertThat(admin).contains("requestCode", "driverCode", "customerCode", "ID RucoFi");
@@ -131,7 +143,7 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("Não foi possível estabelecer ligação à base de dados");
         assertThat(admin).contains("Não foi possível contactar o servidor do RucoPlan");
         assertThat(admin).contains("Não foi possível gerar o plano de produção", "Correlation ID", "retry-planning-operation");
-        assertThat(admin).contains("const lines = plan?.lines || []");
+        assertThat(admin).contains("const items = summaryPlan?.lines || summaryPlan?.items || []");
         assertThat(admin).doesNotContain("alert(");
         assertThat(admin).contains("Copiar resumo de diagnóstico", "Database status", "Realtime status");
         assertThat(admin).contains("Configuração do webhook", "Último webhook recebido", "Cloud API");

@@ -57,6 +57,35 @@ public class DriverIntakeConversationService {
     }
 
     public String summary(TelegramIntakeDraftEntity draft, DateTimeFormatter formatter) {
+        if (draft.getProductionSite() != null
+                && draft.getProductionSite().getCode() == pt.rucodel.productionplanning.domain.ProductionSiteCode.LUX) {
+            return """
+                    10/10 — Confirma o pedido?
+
+                    Unidade de produção: %s
+                    Cliente: %s
+
+                    Tipos de jantes:
+                    * Lavadas: %d
+                    * Normais: %d
+                    * Total: %d jantes
+
+                    Entrada prevista na fábrica: %s, %s
+                    Devem estar prontas: %s, %s
+                    Notas: %s
+                    """.formatted(
+                    draft.getProductionSite().getDisplayName(),
+                    draft.getCustomerNameSnapshot(),
+                    value(draft, WheelType.WASHED),
+                    value(draft, WheelType.NORMAL),
+                    draft.totalWheelQuantity(),
+                    formatter.format(draft.getFactoryDropoffDate()),
+                    draft.getFactoryDropoffSlot().label(),
+                    formatter.format(draft.getReadyDate()),
+                    draft.getFactoryPickupSlot().label(),
+                    draft.getNotes() == null ? "Sem notas" : draft.getNotes()
+            );
+        }
         return """
                 10/10 — Confirma o pedido?
 

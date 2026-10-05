@@ -1,5 +1,6 @@
 package pt.rucodel.productionplanning.integration;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -14,6 +15,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import pt.rucodel.productionplanning.repository.ApplicationUserRepository;
 import pt.rucodel.productionplanning.domain.UserRole;
 import pt.rucodel.productionplanning.entity.ApplicationUserEntity;
+import pt.rucodel.productionplanning.security.AuthenticatedUser;
+import pt.rucodel.productionplanning.service.StatusHistoryActorService;
+
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -36,6 +41,12 @@ class LocalAuthenticationIntegrationTest {
     @Autowired ApplicationUserRepository users;
     @Autowired UserDetailsService userDetailsService;
     @Autowired PasswordEncoder passwordEncoder;
+    @Autowired StatusHistoryActorService statusHistoryActors;
+
+    @BeforeEach
+    void cleanUsers() {
+        users.deleteAll();
+    }
 
     @Test
     void localLoginUsesConfiguredCredentialsWithoutPersistedUsers() throws Exception {
@@ -90,5 +101,24 @@ class LocalAuthenticationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.displayName").value("Administrador Local"))
                 .andExpect(jsonPath("$.user.productionSite.code").value("LUX"));
+    }
+
+    @Test
+    void localAuthenticatedUserIsMappedToPersistedInactiveAuditActor() {
+        AuthenticatedUser localUser = new AuthenticatedUser(
+                UUID.nameUUIDFromBytes("local-admin:local-admin".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                "local-admin",
+                "Administrador Local",
+                UserRole.ADMIN,
+                null);
+
+        UUID actorId = statusHistoryActors.authenticatedActorId(localUser);
+
+        ApplicationUserEntity actor = users.findById(actorId).orElseThrow();
+        assertThat(actor.getUsername()).isEqualTo("local-admin");
+        assertThat(actor.getDisplayName()).isEqualTo("Administrador Local");
+        assertThat(actor.getRole()).isEqualTo(UserRole.ADMIN);
+        assertThat(actor.isActive()).isFalse();
+        assertThat(actor.getPasswordHash()).isEqualTo("!DISABLED_AUDIT_ACTOR!");
     }
 }

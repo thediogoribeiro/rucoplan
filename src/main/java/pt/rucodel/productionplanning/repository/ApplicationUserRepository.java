@@ -12,6 +12,8 @@ import java.util.UUID;
 public interface ApplicationUserRepository extends JpaRepository<ApplicationUserEntity, UUID> {
     Optional<ApplicationUserEntity> findByUsername(String username);
 
+    Optional<ApplicationUserEntity> findByUsernameIgnoreCase(String username);
+
     @Query("""
             select u from ApplicationUserEntity u
             left join fetch u.driver

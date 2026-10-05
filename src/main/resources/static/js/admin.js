@@ -2,12 +2,14 @@ const ADMIN_VIEW_REDIRECTS = {
   diagnostics: 'settings/diagnostics',
   audit: 'settings/audit',
   capacity: 'settings/capacity',
-  settings: 'settings/diagnostics'
+  settings: 'settings/diagnostics',
+  planning: 'dashboard'
 };
 
 const state = {
   date: pp.tomorrowString(),
   view: normalizedViewFromLocation(),
+  activeSite: null,
   dashboard: null,
   productionPlan: null,
   productionPlans: [],
@@ -51,10 +53,18 @@ const state = {
     correlationId: null,
     heartbeatStatus: 'UNKNOWN'
   },
+  autoRecalculation: {
+    active: false,
+    error: null,
+    productionSite: null,
+    reason: null,
+    correlationId: null
+  },
   filters: {
     driver: '',
     customer: '',
     status: '',
+    wheelType: '',
     risk: '',
     confidence: '',
     productionDate: ''
@@ -105,6 +115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function renderActiveSite(site) {
+  state.activeSite = site || null;
   const element = document.querySelector('#active-site-indicator');
   if (!element) return;
   if (!site?.code) {
@@ -161,7 +172,7 @@ async function loadPlanningData() {
   let loadedAnyPlanningData = false;
 
   try {
-    state.productionPlan = await api.get(`/api/v1/admin/production-plans/${state.date}`);
+    state.productionPlan = await api.get(`/api/v1/admin/production-plans/${state.date}${productionPlanFilterQuery()}`);
     loadedAnyPlanningData = true;
   } catch (error) {
     planningError = planningError || normalizeError(error);
@@ -190,6 +201,18 @@ async function loadPlanningData() {
   return !planningError;
 }
 
+function productionPlanFilterQuery() {
+  const params = new URLSearchParams();
+  if (state.filters.driver) params.set('driver', state.filters.driver);
+  if (state.filters.customer) params.set('customerId', state.filters.customer);
+  if (state.filters.status) params.set('status', state.filters.status);
+  if (state.filters.wheelType) params.set('wheelType', state.filters.wheelType);
+  if (state.filters.confidence) params.set('availability', state.filters.confidence);
+  if (state.filters.risk) params.set('risk', state.filters.risk);
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
 async function loadOptionalAdminData() {
   const optional = await Promise.allSettled([
     api.get(`/api/v1/admin/dashboard?date=${state.date}`),
@@ -216,8 +239,7 @@ async function loadOptionalAdminData() {
 }
 
 function render() {
-  if (state.view === 'planning') renderProductionPlanning();
-  else if (state.view === 'closure') renderShiftClosure();
+  if (state.view === 'closure') renderShiftClosure();
   else if (state.view === 'targets') renderTargets();
   else if (state.view === 'new-request') renderNewRequest();
   else if (state.view === 'requests') renderRequests();
@@ -226,44 +248,47 @@ function render() {
   else if (state.view === 'customers') renderCustomers();
   else if (state.view.startsWith('settings/')) renderSettingsSection();
   else renderDashboard();
+  renderAutoRecalculationNotice();
 }
 
-function renderProductionPlanning() {
-  const plan = state.productionPlan;
-  const lines = plan?.lines || [];
-  document.querySelector('#admin-app').innerHTML = `
-    <section class="panel">
-      <div class="section-header">
-        <div>
-          <h2>${plan ? pp.fullDate(plan.planningDate) : 'Planeamento de Produção'} ${plan ? pp.badge(plan.status) : ''}</h2>
-          ${targetsOutdated(plan) ? '<p class="muted">Existem targets mais recentes. Clique em Recalcular para atualizar o plano.</p>' : ''}
-        </div>
-        <div class="actions">
-          <button type="button" class="secondary" data-date-nav="-1">Dia anterior</button>
-          <button type="button" class="secondary" data-date-set="${pp.todayString()}">Hoje</button>
-          <button type="button" class="secondary" data-date-set="${pp.tomorrowString()}">Amanhã</button>
-          <button type="button" class="secondary" data-date-nav="1">Dia seguinte</button>
-          <button id="planning-refresh" class="secondary" type="button" ${state.busy.refresh ? 'disabled' : ''}>${state.busy.refresh ? 'A atualizar...' : 'Atualizar'}</button>
-          <button id="planning-recalculate" type="button" ${state.busy.recalculate ? 'disabled' : ''}>${state.busy.recalculate ? 'A recalcular...' : 'Recalcular'}</button>
-        </div>
-      </div>
-      ${planningSystemNotices()}
-      ${plan ? dailyHeader(plan) : '<p class="muted">Sem plano para a data selecionada.</p>'}
-    </section>
-    <section class="panel">
-      <div class="section-header"><h2>Trabalho por cliente e pedido</h2></div>
-      ${productionPlanTable(lines)}
-    </section>
-    <section class="panel">
-      <div class="section-header"><h2>Dias próximos</h2></div>
-      <div class="window-grid">${state.productionPlans.map(planCard).join('')}</div>
-    </section>`;
-  bindPlanningNavigation();
+function renderAutoRecalculationNotice() {
+  let notice = document.querySelector('#auto-recalculation-notice');
+  if (!state.autoRecalculation.active && !state.autoRecalculation.error) {
+    notice?.remove();
+    return;
+  }
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'auto-recalculation-notice';
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    document.body.appendChild(notice);
+  }
+  if (state.autoRecalculation.active) {
+    notice.className = 'recalculation-toast active';
+    notice.innerHTML = `
+      <span class="spinner" aria-hidden="true"></span>
+      <span>O plano está a ser recalculado com os dados mais recentes.</span>
+    `;
+    return;
+  }
+  notice.className = 'recalculation-toast error';
+  notice.innerHTML = `
+    <strong>Não foi possível recalcular o plano.</strong>
+    <span>Tenta novamente ou consulta o Diagnóstico.${state.autoRecalculation.correlationId ? ` Correlation ID: ${pp.escapeHtml(state.autoRecalculation.correlationId)}` : ''}</span>
+    <button type="button" class="secondary" id="dismiss-recalculation-error">Fechar</button>
+  `;
+  notice.querySelector('#dismiss-recalculation-error')?.addEventListener('click', () => {
+    state.autoRecalculation.error = null;
+    renderAutoRecalculationNotice();
+  });
 }
 
 function dailyHeader(plan) {
   return `<section class="metric-grid metric-grid-primary">
     ${metric('Total planeado', `${plan.totalPlanned} jantes`)}
+    ${metric('Confirmadas / Entraram na fábrica', `${plan.confirmedPlannedQuantity ?? 0} jantes`)}
+    ${metric('Ainda não confirmadas', `${plan.unconfirmedPlannedQuantity ?? 0} jantes`)}
     ${metric('Bipartidas', quantityValue(plan.wheelQuantities, 'BIPARTITE'))}
     ${metric('Lavadas', quantityValue(plan.wheelQuantities, 'WASHED'))}
     ${metric('Normais', quantityValue(plan.wheelQuantities, 'NORMAL'))}
@@ -340,36 +365,6 @@ function isNonProductionDay(plan) {
     && /domingo|sem produção/i.test(plan.warning || '');
 }
 
-function productionPlanTable(lines) {
-  if (!lines.length) return '<p class="muted">Sem trabalho planeado para este dia.</p>';
-  const grouped = new Map();
-  for (const line of lines) {
-    grouped.set(line.customerName, [...(grouped.get(line.customerName) || []), line]);
-  }
-  return [...grouped.entries()].map(([customer, customerLines]) => `
-    <h3>${pp.escapeHtml(customer)}</h3>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Ordem</th><th>Pedido</th><th>Motorista</th><th>Total pedido</th><th>Tipos de jantes</th><th>Planeado</th><th>Concluído</th><th>Restante</th><th>Entrada fábrica</th><th>Prazo</th><th>Levantamento</th><th>Notas</th><th>Origem</th><th>Indicações</th><th>Estado</th></tr></thead>
-      <tbody>${customerLines.map(line => `<tr>
-        <td>${line.priorityOrder}</td>
-        <td><span class="code-pill">${pp.escapeHtml(line.requestCode || '-')}</span></td>
-        <td>${pp.escapeHtml(line.driverName)}</td>
-        <td>${line.requestTotalQuantity}</td>
-        <td>${wheelSummaryVertical(line.wheelQuantities)}</td>
-        <td>${line.plannedQuantity}</td>
-        <td>${line.completedQuantity}</td>
-        <td>${line.remainingQuantity}</td>
-        <td>${factoryWindow(line.factoryDropoffStart, line.factoryDropoffEnd)}</td>
-        <td>${pp.formatDateTime(line.deadlineAt)}</td>
-        <td>${factoryWindow(line.factoryPickupStart, line.factoryPickupEnd)}</td>
-        <td>${pp.escapeHtml(line.notes || '-')}</td>
-        <td>${sourceLabel(line.source)}</td>
-        <td>${line.carriedOver ? pp.badge('CARRIED_OVER') : ''} ${line.advancedFromFuture ? pp.badge('ADVANCED') : ''}<small>${pp.escapeHtml(line.priorityExplanation || '')}</small></td>
-        <td>${pp.badge(line.status)} ${pp.badge(line.riskClassification)}</td>
-      </tr>`).join('')}</tbody>
-    </table></div>`).join('');
-}
-
 function planCard(plan) {
   return `<article class="window-column">
     <h3>${pp.formatDate(plan.planningDate)}</h3>
@@ -398,7 +393,7 @@ function bindPlanningNavigation() {
   }));
   document.querySelector('#planning-refresh')?.addEventListener('click', async () => {
     state.busy.refresh = true;
-    renderProductionPlanning();
+    renderDashboard();
     try {
       await loadAdminData();
     } finally {
@@ -409,7 +404,7 @@ function bindPlanningNavigation() {
   document.querySelector('#planning-recalculate')?.addEventListener('click', async () => {
     state.busy.recalculate = true;
     state.operationNotice = null;
-    renderProductionPlanning();
+    renderDashboard();
     try {
       const recalculated = await api.postJson(`/api/v1/admin/production-plans/${state.date}/recalculate`, {});
       if (recalculated) {
@@ -551,6 +546,7 @@ function renderShiftClosure() {
 
 function closureCard(line) {
   const highlighted = state.highlightedClosureLineId && String(line.id) === String(state.highlightedClosureLineId);
+  const closing = state.busy.closureLine === String(line.id);
   return `<article class="closure-card ${highlighted ? 'highlighted' : ''}" data-closure-line data-request-code="${pp.escapeHtml(line.requestCode || '-')}" data-customer-name="${pp.escapeHtml(line.customerName)}" data-request-remaining="${line.requestRemainingQuantity || line.plannedQuantity}">
     <section class="closure-info">
       <input type="hidden" data-line-id value="${line.id}">
@@ -572,7 +568,7 @@ function closureCard(line) {
         <tfoot><tr><th>Total</th><th data-row-planned>${line.plannedQuantity}</th><th data-row-completed>0</th><th data-row-remaining>0</th></tr></tfoot>
       </table>
       <label>Notas operacionais<input data-notes value="${pp.escapeHtml(line.operationalNotes || '')}"></label>
-      <div class="actions"><button type="button" data-close-line disabled aria-disabled="true" title="Não é possível fechar: nenhuma jante foi marcada como concluída.">Fechar no turno</button></div>
+      <div class="actions"><button type="button" data-close-line ${closing ? 'disabled' : 'disabled aria-disabled="true" title="Não é possível fechar: nenhuma jante foi marcada como concluída."'}>${closing ? 'A fechar...' : 'Fechar no turno'}</button></div>
       <p class="help-text" data-close-help>Indique pelo menos uma jante concluída para poder fechar este trabalho no turno.</p>
       <div class="closure-confirmation hidden" data-close-confirmation></div>
       <p class="message error hidden" data-line-error></p>
@@ -658,6 +654,8 @@ async function submitClosureLine(row) {
 async function confirmClosureLine(row, expectedCompleted, expectedRemaining) {
   const message = document.querySelector('#closure-message');
   pp.hideMessage(message);
+  const id = row.querySelector('[data-line-id]')?.value;
+  if (!id || state.busy.closureLine === id) return;
   if (!validateClosureRow(row)) {
     clearClosureConfirmation(row);
     pp.showMessage(message, 'Corrija as quantidades antes de fechar este pedido.');
@@ -669,6 +667,7 @@ async function confirmClosureLine(row, expectedCompleted, expectedRemaining) {
     return;
   }
   try {
+    state.busy.closureLine = id;
     row.querySelectorAll('button,input').forEach(element => element.disabled = true);
     const result = await closeClosureRow(row);
     await loadAdminData();
@@ -685,8 +684,10 @@ async function confirmClosureLine(row, expectedCompleted, expectedRemaining) {
     pp.showMessage(document.querySelector('#closure-message'), text, 'success');
   } catch (error) {
     pp.showMessage(message, error.message || 'Não foi possível fechar este pedido.');
-  } finally {
     row.querySelectorAll('button,input').forEach(element => element.disabled = false);
+    validateClosureRow(row);
+  } finally {
+    state.busy.closureLine = null;
   }
 }
 
@@ -826,11 +827,27 @@ function isClosedPlanLine(line) {
 function renderDashboard() {
   const d = state.dashboard;
   if (!d) return;
-  const plan = d.plan;
   const summaryPlan = dailySummaryPlan(d);
-  const items = plan?.items || [];
+  const items = summaryPlan?.lines || summaryPlan?.items || [];
   document.querySelector('#admin-app').innerHTML = `
-    ${dailyDashboardSummary(d, summaryPlan)}
+    <section class="panel">
+      <div class="section-header">
+        <div>
+          <h2>${summaryPlan ? pp.fullDate(summaryPlan.planningDate) : pp.fullDate(state.date)} ${summaryPlan ? pp.badge(summaryPlan.status) : ''}</h2>
+          ${targetsOutdated(summaryPlan) ? '<p class="muted">Existem targets mais recentes. Clique em Recalcular para atualizar o plano.</p>' : ''}
+        </div>
+        <div class="actions">
+          <button type="button" class="secondary" data-date-nav="-1">Dia anterior</button>
+          <button type="button" class="secondary" data-date-set="${pp.todayString()}">Hoje</button>
+          <button type="button" class="secondary" data-date-set="${pp.tomorrowString()}">Amanhã</button>
+          <button type="button" class="secondary" data-date-nav="1">Dia seguinte</button>
+          <button id="planning-refresh" class="secondary" type="button" ${state.busy.refresh ? 'disabled' : ''}>${state.busy.refresh ? 'A atualizar...' : 'Atualizar'}</button>
+          <button id="planning-recalculate" type="button" ${state.busy.recalculate ? 'disabled' : ''}>${state.busy.recalculate ? 'A recalcular...' : 'Recalcular'}</button>
+        </div>
+      </div>
+      ${planningSystemNotices()}
+      ${summaryPlan ? dailyHeader(summaryPlan) : '<p class="muted">Sem plano para a data selecionada.</p>'}
+    </section>
     <section class="metric-grid metric-grid-secondary">
       ${metric('Na fábrica', d.wheelsAtFactory)}
       ${metric('Esperadas hoje', d.wheelsExpectedToday)}
@@ -838,40 +855,21 @@ function renderDashboard() {
       ${metric('Prontas', d.wheelsReady)}
     </section>
     ${capacityAlertBanner()}
-    ${summaryPlan?.warning ? `<p class="message ${isOvertimeRequired(summaryPlan) ? 'error' : 'warning'}">${pp.escapeHtml(summaryPlan.warning)}</p>` : ''}
     ${arrivalPendingNotice(items)}
     <p class="connection-status">Última geração: ${summaryPlan ? pp.formatDateTime(summaryPlan.generatedAt) + ' · versão ' + summaryPlan.versionNumber : 'sem plano gerado'}</p>
     ${filters()}
     <section class="panel">
-      <div class="section-header"><h2>Plano de produção por janela de pronto</h2></div>
-      <div class="window-grid">${renderPlanByWindow(filterItems(items))}</div>
+      <div class="section-header"><h2>Pedidos do dia</h2></div>
+      ${planTable(items)}
     </section>
     <section class="panel">
-      <div class="section-header"><h2>Lista de produção priorizada</h2></div>
-      ${planTable(filterItems(items))}
-    </section>
-    <section class="panel">
-      <div class="section-header"><h2>Chegadas previstas à fábrica</h2></div>
-      <div class="list-stack">${d.expectedFactoryArrivals.length ? d.expectedFactoryArrivals.map(arrivalItem).join('') : '<p class="muted">Sem chegadas previstas para hoje.</p>'}</div>
-    </section>
-    <section class="panel">
-      <div class="section-header"><h2>Riscos e exceções</h2></div>
-      <div class="list-stack">${d.risksAndExceptions.length ? d.risksAndExceptions.map(text => `<p class="message warning">${pp.escapeHtml(text)}</p>`).join('') : '<p class="muted">Sem riscos assinalados.</p>'}</div>
-    </section>
-    <section class="panel">
-      <div class="section-header"><h2>Carga futura</h2></div>
-      <div class="list-stack">${d.futureWorkload.length ? d.futureWorkload.map(arrivalItem).join('') : '<p class="muted">Sem carga futura registada.</p>'}</div>
+      <div class="section-header"><h2>Próximos dias</h2></div>
+      <div class="window-grid">${state.productionPlans.length ? state.productionPlans.map(planCard).join('') : '<p class="muted">Sem planos futuros para apresentar.</p>'}</div>
     </section>
   `;
   bindDashboardActions();
-  document.querySelectorAll('.filters select').forEach(input => input.addEventListener('input', () => {
-    state.filters.driver = document.querySelector('#filter-driver')?.value || '';
-    state.filters.customer = document.querySelector('#filter-customer')?.value || '';
-    state.filters.status = document.querySelector('#filter-status')?.value || '';
-    state.filters.risk = document.querySelector('#filter-risk')?.value || '';
-    state.filters.confidence = document.querySelector('#filter-confidence')?.value || '';
-    renderDashboard();
-  }));
+  bindPlanningNavigation();
+  bindPlanFilters();
 }
 
 function renderNewRequest() {
@@ -902,7 +900,7 @@ function renderNewRequest() {
           <div class="${state.manualOrder.mode === 'new' ? '' : 'hidden'}">
             <label>Nome<input name="newCustomerName"></label>
             <label>NIF/VAT<input name="newCustomerTaxIdentifier"></label>
-            <label>País<input name="newCustomerCountryCode" maxlength="2" placeholder="PT"></label>
+            <label>País<input name="newCustomerCountryName" maxlength="120" value="${pp.escapeHtml(defaultCountryName())}"></label>
             <label>Localidade<input name="newCustomerLocality"></label>
             <label>ID RucoFi opcional<input name="newCustomerRucofiId"></label>
           </div>
@@ -918,7 +916,9 @@ function renderNewRequest() {
         </fieldset>
         <fieldset>
           <legend>Quantidades</legend>
-          <label>Jantes bipartidas<input name="bipartiteQuantity" type="number" min="0" step="1" value="0"></label>
+          ${state.activeSite?.code === 'LUX'
+            ? '<input name="bipartiteQuantity" type="hidden" value="0"><p class="muted wide">Luxemburgo processa apenas jantes lavadas e normais.</p>'
+            : '<label>Jantes bipartidas<input name="bipartiteQuantity" type="number" min="0" step="1" value="0"></label>'}
           <label>Jantes lavadas<input name="washedQuantity" type="number" min="0" step="1" value="0"></label>
           <label>Jantes normais<input name="normalQuantity" type="number" min="0" step="1" value="0"></label>
           <p class="muted wide" id="manual-total">Total de jantes: 0</p>
@@ -1007,7 +1007,7 @@ async function createManualRequest(event) {
       const created = await api.postJson('/api/v1/admin/customers', {
         name: form.newCustomerName.value,
         taxIdentifier: form.newCustomerTaxIdentifier.value,
-        countryCode: form.newCustomerCountryCode.value,
+        countryName: form.newCustomerCountryName.value,
         locality: form.newCustomerLocality.value,
         externalSystem: form.newCustomerRucofiId.value ? 'RUCOFI' : null,
         externalCustomerId: form.newCustomerRucofiId.value || null,
@@ -1110,6 +1110,8 @@ function dailySummaryPlan(d) {
 function dailyDashboardSummary(d, plan) {
   return `<section class="metric-grid metric-grid-dashboard-primary">
     ${metric('Total planeado', `${planTotalPlanned(plan, d)} jantes`)}
+    ${metric('Confirmadas / Entraram na fábrica', `${plan?.confirmedPlannedQuantity ?? 0} jantes`)}
+    ${metric('Ainda não confirmadas', `${plan?.unconfirmedPlannedQuantity ?? 0} jantes`)}
     ${metric('Total concluído', `${planTotalCompleted(plan)} jantes`)}
     ${metric('Target mínimo', targetMetricValue(planMinimumTarget(plan), plan))}
     ${metric('Target máximo', targetMetricValue(planMaximumTarget(plan), plan))}
@@ -1127,80 +1129,70 @@ function capacityAlertBanner() {
 }
 
 function filters() {
+  const wheelTypes = state.activeSite?.code === 'LUX'
+    ? ['WASHED', 'NORMAL']
+    : ['BIPARTITE', 'WASHED', 'NORMAL'];
   return `
     <section class="panel">
       <div class="filters">
         <select id="filter-driver"><option value="">Todos os motoristas</option>${state.drivers.map(driver => `<option value="${driver.name}" ${state.filters.driver === driver.name ? 'selected' : ''}>${pp.escapeHtml(driver.name)}</option>`).join('')}</select>
-        <select id="filter-customer"><option value="">Todos os clientes</option>${state.customers.map(customer => `<option value="${customer.name}" ${state.filters.customer === customer.name ? 'selected' : ''}>${pp.escapeHtml(customer.name)}</option>`).join('')}</select>
+        <select id="filter-customer"><option value="">Todos os clientes</option>${state.customers.map(customer => `<option value="${customer.id}" ${state.filters.customer === customer.id ? 'selected' : ''}>${pp.escapeHtml(customer.name)}</option>`).join('')}</select>
         <select id="filter-status"><option value="">Todos os estados</option>${['COMMUNICATED','AT_FACTORY','IN_PRODUCTION','READY_FOR_PICKUP','CANCELLED'].map(status => `<option ${state.filters.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
+        <select id="filter-wheel-type"><option value="">Todos os tipos</option>${wheelTypes.map(type => `<option ${state.filters.wheelType === type ? 'selected' : ''}>${type}</option>`).join('')}</select>
+        <select id="filter-confidence"><option value="">Confirmadas e não confirmadas</option>${['CONFIRMED','WAITING_FOR_ARRIVAL','TENTATIVE'].map(confidence => `<option ${state.filters.confidence === confidence ? 'selected' : ''}>${confidence}</option>`).join('')}</select>
         <select id="filter-risk"><option value="">Todos os riscos</option>${['ON_TRACK','AT_RISK','OVERDUE','OVER_CAPACITY','MISSING_INFORMATION'].map(risk => `<option ${state.filters.risk === risk ? 'selected' : ''}>${risk}</option>`).join('')}</select>
-        <select id="filter-confidence"><option value="">Todas as disponibilidades</option>${['CONFIRMED','TENTATIVE','WAITING_FOR_ARRIVAL'].map(confidence => `<option ${state.filters.confidence === confidence ? 'selected' : ''}>${confidence}</option>`).join('')}</select>
+        <button id="clear-plan-filters" class="secondary" type="button">Limpar filtros</button>
       </div>
     </section>
   `;
 }
 
-function filterItems(items) {
-  const driver = state.filters.driver;
-  const customer = state.filters.customer;
-  const status = state.filters.status;
-  const risk = state.filters.risk;
-  const confidence = state.filters.confidence;
-  return items.filter(item =>
-    (!driver || item.driverName === driver)
-    && (!customer || item.customerName === customer)
-    && (!status || requestById(item.requestId)?.lifecycleStatus === status)
-    && (!risk || item.riskClassification === risk)
-    && (!confidence || item.availabilityClassification === confidence)
-  );
-}
-
-function renderPlanByWindow(items) {
-  if (!items.length) return '<p class="muted">Sem itens para os filtros selecionados.</p>';
-  const grouped = new Map();
-  for (const item of items) {
-    const key = item.assignedWindowLabel || 'Sem janela';
-    grouped.set(key, [...(grouped.get(key) || []), item]);
-  }
-  return [...grouped.entries()].map(([label, group]) => `
-    <article class="window-column">
-      <h3>${pp.escapeHtml(label)}</h3>
-      <div class="list-stack">${group.map(item => `
-        <div class="list-item">
-          <strong>${pp.escapeHtml(item.customerName)}</strong>
-          <span>Total: ${item.quantity} jantes · ${wheelSummary(item.wheelQuantities)}</span>
-          <span>${pp.escapeHtml(item.driverName)}</span>
-          <span>${pp.badge(item.availabilityClassification)} ${pp.badge(item.riskClassification)}</span>
-        </div>`).join('')}
-      </div>
-    </article>
-  `).join('');
-}
-
 function planTable(items) {
-  if (!items.length) return '<p class="muted">Sem itens para os filtros selecionados.</p>';
+  if (!items.length) return '<p class="muted">Não existem pedidos para os filtros selecionados.</p>';
   return `<div class="table-wrap"><table>
-    <thead><tr><th>Prioridade</th><th>Cliente</th><th>Motorista</th><th>Total</th><th>Tipos de jantes</th><th>Chegada fábrica</th><th>Levantamento fábrica</th><th>Estado</th><th>Disponibilidade</th><th>Risco</th><th>Explicação</th><th>Ações</th></tr></thead>
-    <tbody>${items.map(item => {
-      const request = requestById(item.requestId);
-      return `<tr>
-        <td>${item.priorityScore}</td>
+    <thead><tr><th>Ordem</th><th>Pedido</th><th>Cliente</th><th>Motorista</th><th>Planeado</th><th>Concluído</th><th>Restante</th><th>Tipos de jantes</th><th>Entrada fábrica</th><th>Levantamento</th><th>Estado</th><th>Confirmação</th><th>Alertas</th><th>Ações</th></tr></thead>
+    <tbody>${items.map(item => `<tr>
+        <td>${item.priorityOrder}</td>
+        <td><span class="code-pill">${pp.escapeHtml(item.requestCode || '-')}</span></td>
         <td>${pp.escapeHtml(item.customerName)}</td>
         <td>${pp.escapeHtml(item.driverName)}</td>
-        <td>${item.quantity}</td>
-        <td>${wheelSummary(item.wheelQuantities)}</td>
-        <td>${pp.formatDateTime(item.availabilityAt)}</td>
-        <td>${pp.formatDateTime(item.requiredReadyAt)}</td>
-        <td>${request ? pp.badge(request.lifecycleStatus) : '-'}</td>
+        <td>${item.plannedQuantity}</td>
+        <td>${item.completedQuantity}</td>
+        <td>${item.remainingQuantity}</td>
+        <td>${wheelSummaryVertical(item.wheelQuantities)}</td>
+        <td>${factoryWindow(item.factoryDropoffStart, item.factoryDropoffEnd)}</td>
+        <td>${factoryWindow(item.factoryPickupStart, item.factoryPickupEnd)}</td>
+        <td>${pp.badge(item.requestLifecycleStatus)} ${pp.badge(item.status)}</td>
         <td>${pp.badge(item.availabilityClassification)}${item.availabilityClassification === 'WAITING_FOR_ARRIVAL' ? '<br><small>Chegada por confirmar</small>' : ''}</td>
-        <td>${pp.badge(item.riskClassification)}</td>
-        <td>${pp.escapeHtml(item.priorityExplanation)}</td>
+        <td>${pp.badge(item.riskClassification)} ${item.carriedOver ? pp.badge('CARRIED_OVER') : ''} ${item.advancedFromFuture ? pp.badge('ADVANCED') : ''}<br><small>${pp.escapeHtml(item.priorityExplanation || '')}</small></td>
         <td><div class="actions">
-          ${request ? `<button type="button" class="secondary" data-priority="${request.id}">Prioridade</button>` : ''}
+          <button type="button" class="secondary" data-priority="${item.requestId}">Prioridade</button>
         </div></td>
-      </tr>`;
-    }).join('')}</tbody>
+      </tr>`).join('')}</tbody>
   </table></div>`;
+}
+
+function bindPlanFilters() {
+  document.querySelectorAll('.filters select').forEach(input => input.addEventListener('input', async () => {
+    state.filters.driver = document.querySelector('#filter-driver')?.value || '';
+    state.filters.customer = document.querySelector('#filter-customer')?.value || '';
+    state.filters.status = document.querySelector('#filter-status')?.value || '';
+    state.filters.wheelType = document.querySelector('#filter-wheel-type')?.value || '';
+    state.filters.risk = document.querySelector('#filter-risk')?.value || '';
+    state.filters.confidence = document.querySelector('#filter-confidence')?.value || '';
+    await loadPlanningData();
+    renderDashboard();
+  }));
+  document.querySelector('#clear-plan-filters')?.addEventListener('click', async () => {
+    state.filters.driver = '';
+    state.filters.customer = '';
+    state.filters.status = '';
+    state.filters.wheelType = '';
+    state.filters.risk = '';
+    state.filters.confidence = '';
+    await loadPlanningData();
+    renderDashboard();
+  });
 }
 
 function bindDashboardActions() {
@@ -1247,7 +1239,7 @@ async function regeneratePlan() {
 
 async function confirmArrival(id) {
   const request = requestById(id);
-  if (!request) return;
+  if (!request || state.busy.arrival === id) return;
   const summary = [
     'Confirmar entrada na fábrica?',
     '',
@@ -1259,13 +1251,23 @@ async function confirmArrival(id) {
     `Entrada prevista: ${pp.formatDateTime(request.expectedFactoryDropOffWindowStart)}–${pp.formatDateTime(request.expectedFactoryDropOffWindowEnd)}`
   ].join('\n');
   if (!confirm(summary)) return;
-  await api.postJson(`/api/v1/admin/factory-arrivals/${id}/confirm`, {
-    actualFactoryArrivalAt: new Date().toISOString(),
-    reason: 'Confirmado na Entrada na Fábrica',
-    version: request.version
-  });
-  await loadAdminData();
-  render();
+  try {
+    state.busy.arrival = id;
+    renderFactoryArrivals();
+    await api.postJson(`/api/v1/admin/factory-arrivals/${id}/confirm`, {
+      actualFactoryArrivalAt: new Date().toISOString(),
+      reason: 'Confirmado na Entrada na Fábrica',
+      version: request.version
+    });
+    await loadAdminData();
+    state.pageNotice = { type: 'success', message: `Pedido ${request.requestCode || '-'} confirmado na entrada da fábrica.` };
+    render();
+  } catch (error) {
+    state.pageNotice = operationError('Não foi possível confirmar a chegada à fábrica.', error);
+    renderFactoryArrivals();
+  } finally {
+    state.busy.arrival = null;
+  }
 }
 
 async function updatePriority(id) {
@@ -1303,7 +1305,7 @@ function renderRequests() {
       <div class="table-wrap"><table class="requests-table">
         <thead><tr>
           <th>Pedido</th><th>Cliente</th><th>Motorista</th>
-          ${productionMode ? '<th>Data de produção</th><th>Planeadas</th><th>Concluídas</th><th>Pendentes</th><th>Fecho diário</th><th>Fechado por</th><th>Estado global</th><th>Correção de fecho</th>' : '<th>Tipos de jantes</th><th>Deixar na fábrica</th><th>Levantar na fábrica</th><th>Estado</th><th>Origem</th><th>Recebidas</th><th>Diferença</th><th>Correção de fecho</th>'}
+          ${productionMode ? '<th>Data de produção</th><th>Planeadas</th><th>Concluídas</th><th>Pendentes</th><th>Fecho diário</th><th>Fechado por</th><th>Estado global</th><th>Ações</th><th>Correção de fecho</th>' : '<th>Tipos de jantes</th><th>Deixar na fábrica</th><th>Levantar na fábrica</th><th>Estado</th><th>Origem</th><th>Recebidas</th><th>Diferença</th><th>Ações</th><th>Correção de fecho</th>'}
         </tr></thead>
         <tbody>${state.requests.map(request => `<tr>
           <td><span class="code-pill">${pp.escapeHtml(request.requestCode || '-')}</span></td>
@@ -1317,6 +1319,7 @@ function renderRequests() {
             <td>${sourceLabel(request.source)}</td>
             <td>${request.actualReceivedWheelQuantity ?? '-'}</td>
             <td>${request.quantityDiscrepancy ? pp.badge('AT_RISK') : '-'}</td>
+            <td>${requestActionsCell(request)}</td>
             <td>${closureCorrectionCell(request)}</td>
           `}
         </tr>`).join('')}</tbody>
@@ -1334,8 +1337,16 @@ function productionRequestCells(request) {
     <td>${pp.badge(request.productionLineStatus || 'OPEN')}</td>
     <td>${pp.escapeHtml(request.productionClosedBy || '-')}<br><small>${pp.formatDateTime(request.productionClosedAt)}</small></td>
     <td>${pp.badge(request.lifecycleStatus)}</td>
+    <td>${requestActionsCell(request)}</td>
     <td>${closureCorrectionCell(request)}</td>
   `;
+}
+
+function requestActionsCell(request) {
+  if (request.lifecycleStatus === 'CANCELLED' || request.lifecycleStatus === 'READY_FOR_PICKUP') {
+    return '—';
+  }
+  return `<button type="button" class="secondary" data-edit-request="${pp.escapeHtml(request.id)}">Editar pedido</button>`;
 }
 
 function closureCorrectionCell(request) {
@@ -1362,11 +1373,51 @@ function bindRequestsTable() {
   document.querySelectorAll('[data-reopen-line]').forEach(button => {
     button.addEventListener('click', () => openReopenClosurePanel(button.dataset.reopenLine));
   });
+  document.querySelectorAll('[data-edit-request]').forEach(button => {
+    button.addEventListener('click', () => editRequestQuantities(button.dataset.editRequest));
+  });
   document.querySelector('[data-cancel-reopen]')?.addEventListener('click', () => {
     state.reopenClosure = null;
     renderRequests();
   });
   document.querySelector('[data-confirm-reopen]')?.addEventListener('click', confirmReopenPlanItemClosure);
+}
+
+async function editRequestQuantities(id) {
+  const request = state.requests.find(item => item.id === id);
+  if (!request) return;
+  const current = type => quantityValue(request.wheelQuantities, type);
+  const bipartite = state.activeSite?.code === 'LUX'
+    ? 0
+    : promptInteger('Jantes bipartidas:', current('BIPARTITE'));
+  if (bipartite === null) return;
+  const washed = promptInteger('Jantes lavadas:', current('WASHED'));
+  if (washed === null) return;
+  const normal = promptInteger('Jantes normais:', current('NORMAL'));
+  if (normal === null) return;
+  await api.patchJson(`/api/v1/admin/requests/${id}`, {
+    wheelQuantities: [
+      { type: 'BIPARTITE', quantity: bipartite },
+      { type: 'WASHED', quantity: washed },
+      { type: 'NORMAL', quantity: normal }
+    ],
+    version: request.version
+  });
+  state.pageNotice = { type: 'success', message: `Pedido ${request.requestCode || '-'} atualizado.` };
+  await loadAdminData();
+  renderRequests();
+}
+
+function promptInteger(label, value) {
+  const input = prompt(label, String(value ?? 0));
+  if (input === null) return null;
+  const parsed = Number(input);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    state.pageNotice = { type: 'error', message: 'Indique um número inteiro não negativo.' };
+    renderRequests();
+    return null;
+  }
+  return parsed;
 }
 
 async function reloadRequests() {
@@ -1471,7 +1522,7 @@ function renderFactoryArrivals() {
           <td>${request.totalQuantity || request.expectedWheelQuantity || 0}</td>
           <td>${pp.badge(request.lifecycleStatus)}</td>
           <td>${arrivalSituation(request)}</td>
-          <td><button type="button" data-arrival="${request.id}">Confirmar chegada</button></td>
+          <td><button type="button" data-arrival="${request.id}" ${state.busy.arrival === request.id ? 'disabled' : ''}>${state.busy.arrival === request.id ? 'A confirmar...' : 'Confirmar chegada'}</button></td>
         </tr>`).join('')}</tbody>
       </table></div>` : '<p class="muted">Não existem pedidos comunicados a aguardar entrada na fábrica.</p>'}
     </section>`;
@@ -1721,14 +1772,7 @@ function renderCustomers() {
       <form id="customer-form" class="form-grid">
         <label>Nome<input name="name" required></label>
         <label>NIF/VAT<input name="taxIdentifier"></label>
-        <label>País
-          <select name="countryCode">
-            <option value="PT">Portugal</option>
-            <option value="ES">Espanha</option>
-            <option value="FR">França</option>
-            <option value="LU">Luxemburgo</option>
-          </select>
-        </label>
+        <label>País<input name="countryName" maxlength="120" value="${pp.escapeHtml(defaultCountryName())}" required></label>
         <label>Localidade<input name="locality"></label>
         <label>ID RucoFi opcional<input name="rucofiId"></label>
         <button type="submit" ${state.busy.createCustomer ? 'disabled' : ''}>${state.busy.createCustomer ? 'A criar...' : 'Criar cliente'}</button>
@@ -1739,7 +1783,7 @@ function renderCustomers() {
           <td><span class="code-pill">${pp.escapeHtml(customer.customerCode || '-')}</span></td>
           <td>${pp.escapeHtml(customer.name)}</td>
           <td>${pp.escapeHtml(customer.taxIdentifier || '-')}</td>
-          <td>${pp.escapeHtml(countryName(customer.countryCode))}</td>
+          <td>${pp.escapeHtml(customer.countryName || countryName(customer.countryCode))}</td>
           <td>${pp.escapeHtml(customer.locality || '-')}</td>
           <td>${pp.escapeHtml(rucofiId(customer) || '-')}</td>
           <td>${customer.active ? 'Ativo' : 'Inativo'}</td>
@@ -1814,7 +1858,7 @@ async function createCustomer(event) {
     const created = await api.postJson('/api/v1/admin/customers', {
       name: form.name.value.trim(),
       taxIdentifier: form.taxIdentifier.value.trim(),
-      countryCode: form.countryCode.value.trim(),
+      countryName: form.countryName.value.trim(),
       locality: form.locality.value.trim(),
       externalSystem: form.rucofiId.value.trim() ? 'RUCOFI' : '',
       externalCustomerId: form.rucofiId.value.trim(),
@@ -2015,6 +2059,61 @@ async function connectStream() {
       // A malformed or stale event must not break the REST fallback.
     }
   });
+  state.stream.addEventListener('production-plan-recalculation-started', event => {
+    try {
+      state.realtime.lastEventAt = new Date().toISOString();
+      const payload = JSON.parse(event.data);
+      if (!sameActiveSite(payload.productionSite)) return;
+      state.autoRecalculation = {
+        active: true,
+        error: null,
+        productionSite: payload.productionSite,
+        reason: payload.reason || null,
+        correlationId: payload.correlationId || null
+      };
+      renderAutoRecalculationNotice();
+    } catch (_) {
+      // Ignore malformed realtime payloads; REST refresh remains authoritative.
+    }
+  });
+  state.stream.addEventListener('production-plan-recalculation-completed', async event => {
+    try {
+      state.realtime.lastEventAt = new Date().toISOString();
+      const payload = JSON.parse(event.data);
+      if (!sameActiveSite(payload.productionSite)) return;
+      state.autoRecalculation.active = false;
+      state.autoRecalculation.error = null;
+      await loadAdminData();
+      render();
+    } catch (_) {
+      state.autoRecalculation.active = false;
+      renderAutoRecalculationNotice();
+    }
+  });
+  state.stream.addEventListener('production-plan-recalculation-failed', event => {
+    try {
+      state.realtime.lastEventAt = new Date().toISOString();
+      const payload = JSON.parse(event.data);
+      if (!sameActiveSite(payload.productionSite)) return;
+      state.autoRecalculation = {
+        active: false,
+        error: payload.errorCode || 'AUTOMATIC_RECALCULATION_FAILED',
+        productionSite: payload.productionSite,
+        reason: payload.reason || null,
+        correlationId: payload.correlationId || null
+      };
+      renderAutoRecalculationNotice();
+    } catch (_) {
+      state.autoRecalculation = {
+        active: false,
+        error: 'AUTOMATIC_RECALCULATION_FAILED',
+        productionSite: null,
+        reason: null,
+        correlationId: createCorrelationId()
+      };
+      renderAutoRecalculationNotice();
+    }
+  });
   state.stream.addEventListener('error', () => {
     if (state.realtime.manuallyStopped) return;
     state.stream?.close();
@@ -2034,6 +2133,10 @@ async function connectStream() {
     window.clearTimeout(state.realtime.retryTimer);
     state.realtime.retryTimer = window.setTimeout(connectStream, delay);
   });
+}
+
+function sameActiveSite(siteCode) {
+  return !state.activeSite?.code || !siteCode || state.activeSite.code === siteCode;
 }
 
 function startFallbackPolling() {
@@ -2433,6 +2536,16 @@ function updateCloseButtonState(row, valid) {
   const button = row.querySelector('[data-close-line]');
   const help = row.querySelector('[data-close-help]');
   if (!button || !help) return;
+  const id = row.querySelector('[data-line-id]')?.value;
+  if (id && state.busy.closureLine === id) {
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    button.textContent = 'A fechar...';
+    help.textContent = 'Fecho em curso. Aguarde a resposta do servidor.';
+    help.classList.remove('hidden');
+    return;
+  }
+  button.textContent = 'Fechar no turno';
   const completed = rowCompletedTotal(row);
   const disabled = !valid || completed <= 0;
   button.disabled = disabled;
@@ -2503,6 +2616,10 @@ function formatLocalDateCompact(date) {
 
 function countryName(code) {
   return ({ PT: 'Portugal', ES: 'Espanha', FR: 'França', LU: 'Luxemburgo' })[code] || code || '-';
+}
+
+function defaultCountryName() {
+  return state.activeSite?.code === 'LUX' ? 'Luxemburgo' : 'Portugal';
 }
 
 function rucofiId(customer) {

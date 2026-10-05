@@ -368,6 +368,26 @@ public class WheelIntakeRequestEntity extends BaseEntity {
         expectedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getQuantity).sum();
     }
 
+    public void replaceWheelQuantitiesPreservingCompleted(Map<WheelType, Integer> quantities) {
+        Map<WheelType, RequestWheelQuantityEntity> byType = new EnumMap<>(WheelType.class);
+        for (RequestWheelQuantityEntity quantity : wheelQuantities) {
+            byType.put(quantity.getWheelType(), quantity);
+        }
+        for (WheelType type : WheelType.values()) {
+            RequestWheelQuantityEntity quantity = byType.get(type);
+            if (quantity == null) {
+                quantity = new RequestWheelQuantityEntity();
+                quantity.setRequest(this);
+                quantity.setWheelType(type);
+                quantity.setCompletedQuantity(0);
+                wheelQuantities.add(quantity);
+            }
+            quantity.setQuantity(Math.max(quantities.getOrDefault(type, 0), 0));
+        }
+        expectedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getQuantity).sum();
+        completedWheelQuantity = wheelQuantities.stream().mapToInt(RequestWheelQuantityEntity::getCompletedQuantity).sum();
+    }
+
     public void addCompletedWheelQuantities(Map<WheelType, Integer> completedByType) {
         Map<WheelType, RequestWheelQuantityEntity> byType = new EnumMap<>(WheelType.class);
         for (RequestWheelQuantityEntity quantity : wheelQuantities) {

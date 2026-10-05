@@ -49,11 +49,17 @@ Cada cliente pertence a um unico site. O mesmo nome, NIF/VAT ou ID externo pode 
 
 As pesquisas exatas e fuzzy incluem sempre o site na query. Caches de clientes e sugestoes tambem devem incluir o site na chave.
 
+O pais da morada do cliente e guardado como nome por extenso em `customer_reference.country_name`. O valor e editavel no frontend e nao e substituido silenciosamente pela unidade ativa. A unidade ativa apenas define a sugestao inicial para novos clientes: `PT` sugere `Portugal` e `LUX` sugere `Luxemburgo`.
+
+`customer_reference.country_code` continua a existir como campo tecnico opcional para dados antigos e integracoes, mas o utilizador administrativo escreve o nome do pais.
+
 ## Pedidos
 
 Cada pedido pertence a um unico site e deve referenciar um cliente do mesmo site. O site de um pedido confirmado nao deve ser alterado por fluxos normais.
 
 Pedidos manuais sao criados no site da sessao ativa. Telegram e WhatsApp perguntam primeiro a unidade de producao e guardam essa escolha no rascunho.
+
+Luxemburgo nao processa jantes bipartidas. Qualquer pedido LUX com quantidade de bipartidas maior que zero e rejeitado no backend, independentemente de ter origem em Telegram, web/admin ou API direta. Portugal continua a aceitar bipartidas segundo as regras existentes.
 
 ## Motoristas
 
@@ -99,6 +105,8 @@ O planeamento Portugal usa apenas:
 
 O Luxemburgo usa o mesmo motor e as mesmas regras, mas apenas com os dados Luxemburgo.
 
+O planeamento do Luxemburgo ignora defensivamente bipartidas, para impedir que dados antigos ou inconsistentes entrem nos totais, targets ou plano diario LUX. A validacao de criacao/edicao continua a ser a barreira principal.
+
 Planos de Portugal e Luxemburgo podem existir para a mesma data porque a unicidade e por `(production_site_id, planning_date)`.
 
 ## Timezones
@@ -133,6 +141,10 @@ O filtro deve acontecer no backend, antes de enviar eventos ao browser.
 Eventos operacionais devem guardar o `production_site_id` quando a acao pertence a um site. Eventos tecnicos globais devem ser identificados como globais.
 
 Na pagina de auditoria, a vista por defeito mostra apenas o site ativo.
+
+O historico de estados dos pedidos (`request_status_history`) guarda `actor_user_id` com foreign key ativa para `app_user`. Utilizadores reais de base de dados usam o proprio `app_user.id`. Utilizadores autenticados localmente sao mapeados para uma identidade de auditoria inativa em `app_user` quando ainda nao existe linha persistida correspondente. Atores tecnicos de `SYSTEM`, `TELEGRAM` e `WHATSAPP` tambem sao inativos e nao têm password utilizavel.
+
+Falhas ao confirmar chegada devem ser diagnosticadas verificando o correlation ID da resposta, o evento de aplicacao da confirmacao e se o ator resolvido existe em `app_user`. A correcao correta e resolver/criar um ator de auditoria valido; a foreign key nao deve ser removida.
 
 ## Migrations
 

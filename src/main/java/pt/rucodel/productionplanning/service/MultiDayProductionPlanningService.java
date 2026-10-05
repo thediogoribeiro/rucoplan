@@ -112,11 +112,24 @@ public class MultiDayProductionPlanningService {
 
     @Transactional(readOnly = true)
     public DailyProductionPlanResponse getOrGenerate(ProductionSiteCode siteCode, LocalDate date) {
+        return getOrGenerate(siteCode, date, null, null, null, null, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public DailyProductionPlanResponse getOrGenerate(ProductionSiteCode siteCode, LocalDate date,
+                                                     String driver,
+                                                     UUID customerId,
+                                                     LifecycleStatus status,
+                                                     WheelType wheelType,
+                                                     AvailabilityClassification availability,
+                                                     RiskClassification risk) {
         if (!isProductionDay(date)) {
             return nonProductionDayResponse(date);
         }
         return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
-                .map(plan -> toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId())))
+                .map(plan -> toResponse(plan, filteredPlanLines(
+                        planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()),
+                        driver, customerId, status, wheelType, availability, risk)))
                 .orElseGet(() -> emptyProductionDayResponse(date));
     }
 
@@ -1119,6 +1132,8 @@ public class MultiDayProductionPlanningService {
                             null,
                             GenerationTrigger.AUTOMATIC_RECALCULATION,
                             0,
+                            0,
+                            0,
                             List.of()
                     );
                 });
@@ -1148,6 +1163,8 @@ public class MultiDayProductionPlanningService {
                 null,
                 null,
                 GenerationTrigger.AUTOMATIC_RECALCULATION,
+                0,
+                0,
                 0,
                 List.of()
         );
@@ -1185,6 +1202,11 @@ public class MultiDayProductionPlanningService {
         Map<WheelType, Integer> remainingByType = remainingQuantityByType(request);
         List<PlanningDemand> result = new ArrayList<>();
         for (WheelType type : PLANNING_TYPE_PRIORITY) {
+            if (request.getProductionSite() != null
+                    && request.getProductionSite().getCode() == ProductionSiteCode.LUX
+                    && type == WheelType.BIPARTITE) {
+                continue;
+            }
             int quantity = remainingByType.getOrDefault(type, 0);
             if (quantity <= 0) {
                 continue;
@@ -1330,6 +1352,23 @@ public class MultiDayProductionPlanningService {
     }
 
     private DailyProductionPlanResponse toResponse(ProductionPlanEntity plan, List<ProductionPlanItemEntity> lines) {
+        int totalPlanned = lines.stream().mapToInt(ProductionPlanItemEntity::getQuantity).sum();
+        int totalCompleted = lines.stream().mapToInt(ProductionPlanItemEntity::getCompletedQuantity).sum();
+        int totalRemaining = lines.stream().mapToInt(ProductionPlanItemEntity::getRemainingQuantity).sum();
+        int overtimeQuantity = Math.max(0, totalPlanned - plan.getMaximumTargetSnapshot());
+        int belowMinimumQuantity = Math.max(0, plan.getMinimumTargetSnapshot() - totalPlanned);
+        int carriedOverQuantity = lines.stream()
+                .filter(ProductionPlanItemEntity::isCarriedOver)
+                .mapToInt(ProductionPlanItemEntity::getQuantity)
+                .sum();
+        int advancedQuantity = lines.stream()
+                .filter(ProductionPlanItemEntity::isAdvancedFromFuture)
+                .mapToInt(ProductionPlanItemEntity::getQuantity)
+                .sum();
+        int atRiskQuantity = lines.stream()
+                .filter(line -> line.getRiskClassification() != RiskClassification.ON_TRACK)
+                .mapToInt(ProductionPlanItemEntity::getQuantity)
+                .sum();
         return new DailyProductionPlanResponse(
                 plan.getId(),
                 plan.getPlanningDate(),
@@ -1338,23 +1377,72 @@ public class MultiDayProductionPlanningService {
                 plan.getMinimumTargetSnapshot(),
                 plan.getMaximumTargetSnapshot(),
                 wheelQuantityService.toDto(sumLines(lines)),
-                plan.getTotalPlanned(),
-                plan.getTotalCompleted(),
-                plan.getTotalRemaining(),
-                plan.getBelowMinimumQuantity(),
-                plan.getOvertimeQuantity(),
-                plan.getCarriedOverQuantity(),
-                plan.getAdvancedQuantity(),
-                plan.getTotalAtRisk(),
-                plan.getOvertimeQuantity() > 0,
+                totalPlanned,
+                totalCompleted,
+                totalRemaining,
+                belowMinimumQuantity,
+                overtimeQuantity,
+                carriedOverQuantity,
+                advancedQuantity,
+                atRiskQuantity,
+                overtimeQuantity > 0,
                 plan.getWarning(),
                 plan.getGeneratedAt(),
                 plan.getClosedAt(),
                 plan.getClosedBy(),
                 plan.getGenerationTrigger(),
                 plan.getOptimisticVersion(),
+                confirmedPlannedQuantity(lines),
+                unconfirmedPlannedQuantity(lines),
                 lines.stream().map(this::toLineResponse).toList()
         );
+    }
+
+    private List<ProductionPlanItemEntity> filteredPlanLines(List<ProductionPlanItemEntity> lines,
+                                                             String driver,
+                                                             UUID customerId,
+                                                             LifecycleStatus status,
+                                                             WheelType wheelType,
+                                                             AvailabilityClassification availability,
+                                                             RiskClassification risk) {
+        String normalizedDriver = normalizeFilter(driver);
+        return lines.stream()
+                .filter(line -> normalizedDriver == null || normalizedDriver.equals(normalizeFilter(line.getDriverName())))
+                .filter(line -> customerId == null
+                        || line.getRequest().getCustomer() != null
+                        && customerId.equals(line.getRequest().getCustomer().getId()))
+                .filter(line -> status == null || line.getRequest().getLifecycleStatus() == status)
+                .filter(line -> wheelType == null || hasPlannedWheelType(line, wheelType))
+                .filter(line -> availability == null || line.getAvailabilityClassification() == availability)
+                .filter(line -> risk == null || line.getRiskClassification() == risk)
+                .toList();
+    }
+
+    private boolean hasPlannedWheelType(ProductionPlanItemEntity line, WheelType wheelType) {
+        return line.getWheelQuantities().stream()
+                .anyMatch(quantity -> quantity.getWheelType() == wheelType && quantity.getPlannedQuantity() > 0);
+    }
+
+    private String normalizeFilter(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private int confirmedPlannedQuantity(List<ProductionPlanItemEntity> lines) {
+        return lines.stream()
+                .filter(line -> EnumSet.of(LifecycleStatus.AT_FACTORY, LifecycleStatus.IN_PRODUCTION, LifecycleStatus.READY_FOR_PICKUP)
+                        .contains(line.getRequest().getLifecycleStatus()))
+                .mapToInt(ProductionPlanItemEntity::getQuantity)
+                .sum();
+    }
+
+    private int unconfirmedPlannedQuantity(List<ProductionPlanItemEntity> lines) {
+        return lines.stream()
+                .filter(line -> line.getRequest().getLifecycleStatus() == LifecycleStatus.COMMUNICATED)
+                .mapToInt(ProductionPlanItemEntity::getQuantity)
+                .sum();
     }
 
     private DailyProductionPlanLineResponse toLineResponse(ProductionPlanItemEntity line) {

@@ -69,6 +69,9 @@ public class CustomerReferenceEntity extends BaseEntity {
     @Column(name = "country_code", length = 2)
     private String countryCode;
 
+    @Column(name = "country_name", length = 120)
+    private String countryName;
+
     @Column(name = "locality", length = 120)
     private String locality;
 
@@ -197,6 +200,14 @@ public class CustomerReferenceEntity extends BaseEntity {
 
     public void setCountryCode(String countryCode) {
         this.countryCode = countryCode;
+    }
+
+    public String getCountryName() {
+        return countryName;
+    }
+
+    public void setCountryName(String countryName) {
+        this.countryName = countryName;
     }
 
     public String getLocality() {

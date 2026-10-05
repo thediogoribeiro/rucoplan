@@ -60,7 +60,9 @@ class TelegramFlowIntegrationTest {
     @SpyBean DashboardEventPublisher dashboardEvents;
 
     private CustomerReferenceEntity customer;
+    private CustomerReferenceEntity luxCustomer;
     private ProductionSiteEntity portugal;
+    private ProductionSiteEntity luxembourg;
 
     @BeforeEach
     void setUp() {
@@ -93,7 +95,9 @@ class TelegramFlowIntegrationTest {
         drivers.deleteAll();
 
         portugal = productionSites.requireByCode(ProductionSiteCode.PT);
+        luxembourg = productionSites.requireByCode(ProductionSiteCode.LUX);
         customer = customers.save(customer("C1001", "Oficina Central Braga"));
+        luxCustomer = customers.save(customer(luxembourg, "L1001", "Lux Wheels"));
         settings.save(settings(LocalDate.of(2099, 9, 10), 20));
     }
 
@@ -224,6 +228,40 @@ class TelegramFlowIntegrationTest {
         assertThat(draft.getCustomer().getId()).isEqualTo(customer.getId());
         assertThat(draft.getCustomerRegistrationRequest()).isNull();
     }
+
+    @Test
+    void luxembourgTelegramFlowSkipsBipartiteQuestion() {
+        registerDriver(9161L, 7161L, "2");
+
+        process(1161, 9161L, 7161L, "driver", "Lux Wheels");
+
+        assertThat(bot.last()).contains("3/10 — Quantas jantes lavadas")
+                .doesNotContain("bipartidas");
+        TelegramIntakeDraftEntity draft = drafts.findFirstByDriverIdAndStatusOrderByCreatedAtDesc(
+                drivers.findByTelegramUserId(9161L).orElseThrow().getId(), TelegramDraftStatus.ACTIVE).orElseThrow();
+        assertThat(draft.getProductionSite().getId()).isEqualTo(luxembourg.getId());
+        assertThat(draft.wheelQuantity(WheelType.BIPARTITE)).isZero();
+    }
+
+    @Test
+    void telegramDatesAcceptSingleDigitDayAndMonthAndSummaryNormalizesThem() {
+        registerDriver(9162L, 7162L);
+
+        process(2162, 9162L, 7162L, "driver", "Oficina Central Braga");
+        process(2163, 9162L, 7162L, "driver", "0");
+        process(2164, 9162L, 7162L, "driver", "1");
+        process(2165, 9162L, 7162L, "driver", "2");
+        process(2166, 9162L, 7162L, "driver", "1/9/2099");
+        assertThat(bot.last()).contains("6/10 — Entre que horas");
+        process(2167, 9162L, 7162L, "driver", "1");
+        process(2168, 9162L, 7162L, "driver", "01/9/2099");
+        assertThat(bot.last()).contains("8/10 — Entre que horas");
+        process(2169, 9162L, 7162L, "driver", "1");
+        process(2170, 9162L, 7162L, "driver", "Não");
+
+        assertThat(bot.last()).contains("Entrada prevista na fábrica: 01/09/2099", "Devem estar prontas: 01/09/2099");
+    }
+
 
     @Test
     void customerTypoShowsPersistedCandidatesAndSelectionUsesDisplayedPosition() {
@@ -382,9 +420,13 @@ class TelegramFlowIntegrationTest {
     }
 
     private void registerDriver(Long telegramUserId, Long chatId) {
+        registerDriver(telegramUserId, chatId, "1");
+    }
+
+    private void registerDriver(Long telegramUserId, Long chatId, String siteOption) {
         process(1000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "/start");
         process(2000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "Motorista Teste");
-        process(3000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", "1");
+        process(3000 + telegramUserId.intValue(), telegramUserId, chatId, "driver", siteOption);
         bot.clear();
     }
 
@@ -414,6 +456,16 @@ class TelegramFlowIntegrationTest {
     private CustomerReferenceEntity customer(String externalId, String name) {
         CustomerReferenceEntity entity = new CustomerReferenceEntity();
         entity.setProductionSite(portugal);
+        return customer(entity, externalId, name);
+    }
+
+    private CustomerReferenceEntity customer(ProductionSiteEntity site, String externalId, String name) {
+        CustomerReferenceEntity entity = new CustomerReferenceEntity();
+        entity.setProductionSite(site);
+        return customer(entity, externalId, name);
+    }
+
+    private CustomerReferenceEntity customer(CustomerReferenceEntity entity, String externalId, String name) {
         entity.setExternalId(externalId);
         if (externalId != null && externalId.matches("C[0-9]+")) {
             entity.setCustomerNumber(Integer.parseInt(externalId.substring(1)));

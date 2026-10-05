@@ -276,6 +276,7 @@ public class WhatsAppUpdateProcessor {
                 conversation.getNewCustomerName(),
                 conversation.getNewCustomerTaxIdentifier(),
                 conversation.getNewCustomerCountryCode(),
+                countryName(conversation.getNewCustomerCountryCode()),
                 conversation.getNewCustomerLocality(),
                 true,
                 null
@@ -523,6 +524,16 @@ public class WhatsAppUpdateProcessor {
         } catch (NumberFormatException ex) {
             return -1;
         }
+    }
+
+    private String countryName(String countryCode) {
+        return switch (countryCode == null ? "" : countryCode) {
+            case "PT" -> "Portugal";
+            case "LU" -> "Luxemburgo";
+            case "FR" -> "França";
+            case "ES" -> "Espanha";
+            default -> countryCode;
+        };
     }
 
     private String suggestionIds(List<CustomerSearchResult> suggestions) {

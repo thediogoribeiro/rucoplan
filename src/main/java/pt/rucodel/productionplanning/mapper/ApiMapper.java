@@ -39,6 +39,7 @@ public class ApiMapper {
                 entity.getName(),
                 entity.getTaxIdentifier(),
                 entity.getCountryCode(),
+                entity.getCountryName(),
                 entity.getLocality(),
                 entity.getStatus() == null ? null : entity.getStatus().name(),
                 entity.isActive(),

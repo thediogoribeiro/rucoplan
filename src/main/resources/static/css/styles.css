@@ -756,6 +756,43 @@ button.list-item:hover { background: var(--soft); }
   color: var(--text);
 }
 
+.recalculation-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 40px));
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.recalculation-toast.error {
+  align-items: flex-start;
+  flex-direction: column;
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 2px solid var(--line);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .tabbar button.active {
   color: var(--brand);
   background: var(--soft-red);

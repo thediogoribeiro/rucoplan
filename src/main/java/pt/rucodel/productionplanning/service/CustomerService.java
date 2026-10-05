@@ -129,6 +129,7 @@ public class CustomerService {
         entity.setNormalizedName(normalizer.normalize(request.name()));
         entity.setTaxIdentifier(normalizeTaxIdentifier(request.taxIdentifier()));
         entity.setCountryCode(normalizeCountryCode(request.countryCode()));
+        entity.setCountryName(normalizeCountryName(request.countryName(), entity.getCountryCode()));
         entity.setLocality(blankToNull(request.locality()));
         entity.setActive(request.active() == null || request.active());
         entity.setStatus(entity.isActive() ? CustomerStatus.ACTIVE : CustomerStatus.INACTIVE);
@@ -146,5 +147,25 @@ public class CustomerService {
     private String normalizeCountryCode(String value) {
         String clean = blankToNull(value);
         return clean == null ? null : clean.toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private String normalizeCountryName(String value, String countryCode) {
+        String clean = blankToNull(value);
+        if (clean == null && countryCode != null) {
+            clean = switch (countryCode) {
+                case "PT" -> "Portugal";
+                case "LU" -> "Luxemburgo";
+                case "FR" -> "França";
+                case "ES" -> "Espanha";
+                default -> countryCode;
+            };
+        }
+        if (clean == null) {
+            throw new InvalidRequestException("CUSTOMER_COUNTRY_REQUIRED", "O país do cliente é obrigatório.");
+        }
+        if (clean.length() > 120) {
+            throw new InvalidRequestException("CUSTOMER_COUNTRY_TOO_LONG", "O país do cliente não pode exceder 120 caracteres.");
+        }
+        return clean;
     }
 }

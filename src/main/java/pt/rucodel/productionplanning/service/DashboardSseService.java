@@ -4,10 +4,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.context.event.EventListener;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import pt.rucodel.productionplanning.domain.DashboardPlanUpdatedEvent;
+import pt.rucodel.productionplanning.domain.DashboardRecalculationEvent;
 import pt.rucodel.productionplanning.domain.ProductionSiteCode;
 import pt.rucodel.productionplanning.dto.SystemDiagnosticsResponse;
 
@@ -48,6 +50,11 @@ public class DashboardSseService {
         sendPlanUpdate(event);
     }
 
+    @EventListener
+    public void onDashboardRecalculation(DashboardRecalculationEvent event) {
+        sendRecalculationUpdate(event);
+    }
+
     public void sendPlanUpdate(DashboardPlanUpdatedEvent update) {
         sendToSite(update.productionSite(), SseEmitter.event()
                 .name("production-plan-updated")
@@ -56,6 +63,27 @@ public class DashboardSseService {
                         "productionSite", update.productionSite().name(),
                         "date", update.planningDate().toString()
                 )), "dashboard update");
+    }
+
+    public void sendRecalculationUpdate(DashboardRecalculationEvent update) {
+        String eventName = switch (update.status()) {
+            case STARTED -> "production-plan-recalculation-started";
+            case COMPLETED -> "production-plan-recalculation-completed";
+            case FAILED -> "production-plan-recalculation-failed";
+        };
+        java.util.HashMap<String, String> payload = new java.util.HashMap<>();
+        payload.put("type", "PRODUCTION_PLAN_RECALCULATION_" + update.status().name());
+        payload.put("productionSite", update.productionSite().name());
+        payload.put("date", update.planningDate().toString());
+        payload.put("status", update.status().name());
+        payload.put("reason", update.reason() == null ? "" : update.reason());
+        payload.put("correlationId", update.correlationId() == null ? "" : update.correlationId());
+        if (update.errorCode() != null) {
+            payload.put("errorCode", update.errorCode());
+        }
+        sendToSite(update.productionSite(), SseEmitter.event()
+                .name(eventName)
+                .data(payload), "recalculation " + update.status().name().toLowerCase());
     }
 
     @Scheduled(fixedRate = HEARTBEAT_INTERVAL_MILLIS)
