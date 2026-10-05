@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -38,28 +39,54 @@ public class DatabaseAuthenticationProvider implements AuthenticationProvider {
     @Override
     public AuthenticatedAccount authenticate(LoginRequest request) {
         String normalizedUsername = UsernameNormalizer.normalize(request.username());
-        LOGGER.info("auth.login.lookup correlationId={} usernameNormalized={} encoder={} result=START",
-                correlationId(), normalizedUsername, passwordEncoder.getClass().getSimpleName());
+        LOGGER.info("auth.login.repository.lookup correlationId={} usernameNormalized={} repositoryMethod=findWithDriverByNormalizedUsername result=START",
+                correlationId(), normalizedUsername);
 
-        Optional<ApplicationUserEntity> found = users.findWithDriverByNormalizedUsername(normalizedUsername);
+        Optional<ApplicationUserEntity> found;
+        try {
+            found = users.findWithDriverByNormalizedUsername(normalizedUsername);
+        } catch (DataAccessException ex) {
+            LOGGER.info("auth.login.repository.lookup correlationId={} usernameNormalized={} failureReason=DATABASE_ERROR outcome=FAILURE",
+                    correlationId(), normalizedUsername);
+            throw new BadCredentialsException("Invalid credentials", ex);
+        }
+
         if (found.isEmpty()) {
-            LOGGER.info("auth.login.result correlationId={} usernameNormalized={} userFound=false failureReason=USER_NOT_FOUND outcome=FAILURE",
+            LOGGER.info("auth.login.repository.lookup correlationId={} usernameNormalized={} userFound=false failureReason=USER_NOT_FOUND outcome=FAILURE",
                     correlationId(), normalizedUsername);
             throw new BadCredentialsException("Invalid credentials");
         }
+        LOGGER.info("auth.login.repository.lookup correlationId={} usernameNormalized={} userFound=true outcome=SUCCESS",
+                correlationId(), normalizedUsername);
 
         ApplicationUserEntity user = found.get();
+        LOGGER.info("auth.login.account.state correlationId={} usernameNormalized={} active={} locked=NOT_MAPPED status=NOT_MAPPED lockedUntil=NOT_MAPPED",
+                correlationId(), normalizedUsername, user.isActive());
         if (!user.isActive()) {
-            LOGGER.info("auth.login.result correlationId={} usernameNormalized={} userFound=true active=false failureReason=USER_INACTIVE outcome=FAILURE",
+            LOGGER.info("auth.login.result correlationId={} usernameNormalized={} userFound=true active=false failureReason=ACCOUNT_DISABLED outcome=FAILURE",
                     correlationId(), normalizedUsername);
             throw new BadCredentialsException("Invalid credentials");
         }
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        LOGGER.info("auth.login.passwordEncoder correlationId={} usernameNormalized={} encoder={} prefixHandling=NONE result=START",
+                correlationId(), normalizedUsername, passwordEncoder.getClass().getSimpleName());
+        boolean passwordMatches;
+        try {
+            passwordMatches = passwordEncoder.matches(request.password(), user.getPasswordHash());
+        } catch (RuntimeException ex) {
+            LOGGER.info("auth.login.passwordEncoder correlationId={} usernameNormalized={} encoder={} failureReason=PASSWORD_ENCODER_ERROR outcome=FAILURE",
+                    correlationId(), normalizedUsername, passwordEncoder.getClass().getSimpleName());
+            throw new BadCredentialsException("Invalid credentials", ex);
+        }
+        LOGGER.info("auth.login.passwordEncoder correlationId={} usernameNormalized={} matches={} outcome={}",
+                correlationId(), normalizedUsername, passwordMatches, passwordMatches ? "SUCCESS" : "FAILURE");
+        if (!passwordMatches) {
             LOGGER.info("auth.login.result correlationId={} usernameNormalized={} userFound=true active=true failureReason=PASSWORD_MISMATCH outcome=FAILURE",
                     correlationId(), normalizedUsername);
             throw new BadCredentialsException("Invalid credentials");
         }
+        LOGGER.info("auth.login.authenticatedAccount.create correlationId={} usernameNormalized={} result=START",
+                correlationId(), normalizedUsername);
         LOGGER.info("auth.login.result correlationId={} usernameNormalized={} userFound=true active=true failureReason=NONE outcome=SUCCESS",
                 correlationId(), normalizedUsername);
         return new AuthenticatedAccount(

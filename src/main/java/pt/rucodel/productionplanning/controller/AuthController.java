@@ -45,6 +45,8 @@ public class AuthController {
                 correlationId(servletRequest), servletRequest.getRequestURI(), UsernameNormalizer.normalize(request.username()),
                 servletRequest.getContentType());
         LoginResponse response = authService.login(request);
+        LOGGER.info("auth.login.response correlationId={} endpoint={} usernameNormalized={} status=200 outcome=SUCCESS",
+                correlationId(servletRequest), servletRequest.getRequestURI(), UsernameNormalizer.normalize(request.username()));
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, streamCookie(response.token(), response.expiresAt()).toString())
                 .body(response);

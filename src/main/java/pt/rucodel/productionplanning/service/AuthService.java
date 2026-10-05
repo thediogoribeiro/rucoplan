@@ -35,7 +35,11 @@ public class AuthService {
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
         String normalizedUsername = UsernameNormalizer.normalize(request.username());
+        LOGGER.info("auth.login.service.enter correlationId={} usernameNormalized={} authenticationProvider={} authenticationManager=NOT_USED_CUSTOM_PROVIDER session=STATELESS_TOKEN",
+                correlationId(), normalizedUsername, authenticationProvider.getClass().getSimpleName());
         AuthenticatedAccount account = authenticationProvider.authenticate(request);
+        LOGGER.info("auth.login.authenticatedAccount.created correlationId={} usernameNormalized={} result=SUCCESS",
+                correlationId(), normalizedUsername);
         ProductionSiteCode siteCode = ProductionSiteCode.parse(request.productionSite());
         if (siteCode == null) {
             LOGGER.info("auth.login.final correlationId={} usernameNormalized={} failureReason=INVALID_PRODUCTION_SITE outcome=FAILURE",
@@ -43,7 +47,13 @@ public class AuthService {
             throw new BadCredentialsException("Invalid credentials");
         }
         ProductionSiteEntity site = authenticationProvider.requireSite(account, siteCode);
+        LOGGER.info("auth.login.session.create correlationId={} usernameNormalized={} sessionType=HTTP_SESSION status=NOT_CREATED_STATELESS_TOKEN_AUTH",
+                correlationId(), normalizedUsername);
+        LOGGER.info("auth.login.token.create correlationId={} usernameNormalized={} result=START",
+                correlationId(), normalizedUsername);
         TokenService.IssuedToken issued = tokenService.issue(account, site);
+        LOGGER.info("auth.login.token.create correlationId={} usernameNormalized={} result=SUCCESS",
+                correlationId(), normalizedUsername);
         LOGGER.info("auth.login.final correlationId={} usernameNormalized={} productionSite={} failureReason=NONE outcome=SUCCESS",
                 correlationId(), normalizedUsername, site.getCode());
         return new LoginResponse(issued.token(), issued.expiresAt(), toResponse(account, site));

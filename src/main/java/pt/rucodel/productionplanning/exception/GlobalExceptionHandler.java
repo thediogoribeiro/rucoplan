@@ -66,6 +66,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({BadCredentialsException.class})
     public ResponseEntity<ErrorResponse> handleCredentials(Exception ex, HttpServletRequest request) {
+        LOGGER.info("auth.login.error correlationId={} endpoint={} failureReason=AUTHENTICATION_FAILED outcome=FAILURE",
+                correlationId(request), request.getRequestURI());
         return response(HttpStatus.UNAUTHORIZED, error(HttpStatus.UNAUTHORIZED,
                 "AUTHENTICATION_FAILED", "Invalid username or password.", request.getRequestURI(), List.of(), correlationId(request)));
     }
