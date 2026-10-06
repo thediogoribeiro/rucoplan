@@ -235,7 +235,8 @@ class MultiDayPlanningIntegrationTest {
         planning.recalculate(day, GenerationTrigger.MANUAL, admin);
 
         assertThat(plan(day).totalPlanned()).isZero();
-        assertThat(plan(day).warning()).contains("Target mínimo não atingido");
+        assertThat(plan(day).outcome()).isEqualTo("NO_PRODUCTION");
+        assertThat(plan(day).warning()).contains("Não existem pedidos elegíveis");
         assertThat(plan(day.plusDays(1)).lines()).extracting(DailyProductionPlanLineResponse::requestId)
                 .contains(lateArrival.getId());
     }
@@ -743,18 +744,61 @@ class MultiDayPlanningIntegrationTest {
     }
 
     @Test
+    void recalculateWithoutEligibleRequestsReturnsNoProductionAndDoesNotCreatePlan() {
+        createTargets(0, 300, day);
+
+        DailyProductionPlanResponse response = planning.recalculate(ProductionSiteCode.PT, day, GenerationTrigger.MANUAL, "TEST");
+
+        assertThat(response.outcome()).isEqualTo("NO_PRODUCTION");
+        assertThat(response.eligibleRequestCount()).isZero();
+        assertThat(response.plannedQuantity()).isZero();
+        assertThat(response.totalPlanned()).isZero();
+        assertThat(response.lines()).isEmpty();
+        assertThat(plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(ProductionSiteCode.PT, day))
+                .isEmpty();
+    }
+
+    @Test
+    void recalculateClearsEmptyClosedPlanWhenNoRequestsAreEligible() {
+        createTargets(0, 300, day);
+        ProductionPlanEntity emptyClosed = new ProductionPlanEntity();
+        emptyClosed.setProductionSite(portugal);
+        emptyClosed.setPlanningDate(day);
+        emptyClosed.setVersionNumber(1);
+        emptyClosed.setCurrentPlan(true);
+        emptyClosed.setStatus(ProductionPlanStatus.CLOSED);
+        emptyClosed.setGeneratedAt(OffsetDateTime.now(zone));
+        emptyClosed.setGenerationTrigger(GenerationTrigger.AUTOMATIC_RECALCULATION);
+        emptyClosed.setMinimumTargetSnapshot(0);
+        emptyClosed.setMaximumTargetSnapshot(300);
+        emptyClosed.setTargetUsed(300);
+        emptyClosed.setClosedAt(OffsetDateTime.now(zone));
+        emptyClosed.setClosedBy("TEST");
+        plans.saveAndFlush(emptyClosed);
+
+        DailyProductionPlanResponse response = planning.recalculate(ProductionSiteCode.PT, day, GenerationTrigger.MANUAL, "TEST");
+
+        assertThat(response.outcome()).isEqualTo("NO_PRODUCTION");
+        assertThat(response.totalPlanned()).isZero();
+        assertThat(plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(ProductionSiteCode.PT, day))
+                .isEmpty();
+    }
+
+    @Test
     void nextPlanIsProvisionalUntilPreviousDayIsClosedAndOptimisticLockingProtectsClosure() {
         createTargets(0, 300, day);
         request(customerX, 10, day, day.plusDays(1), RequestSource.WEB);
         DailyProductionPlanResponse created = planning.recalculate(day, GenerationTrigger.MANUAL, admin);
 
-        assertThat(plan(day.plusDays(1)).status()).isEqualTo(ProductionPlanStatus.PROVISIONAL);
+        assertThat(plan(day.plusDays(1)).outcome()).isEqualTo("NO_PRODUCTION");
+        assertThat(plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(ProductionSiteCode.PT, day.plusDays(1)))
+                .isEmpty();
 
         assertThatThrownBy(() -> planning.saveReconciliation(day, new ReconciliationRequest(999L, null, List.of()), admin))
                 .isInstanceOf(InvalidRequestException.class);
 
         planning.close(day, closePayload(created, List.of(10)), admin);
-        assertThat(plan(day.plusDays(1)).status()).isEqualTo(ProductionPlanStatus.PUBLISHED);
+        assertThat(plan(day.plusDays(1)).outcome()).isEqualTo("NO_PRODUCTION");
     }
 
     private ReconciliationRequest closePayload(DailyProductionPlanResponse plan, List<Integer> completed) {

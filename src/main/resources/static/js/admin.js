@@ -380,6 +380,10 @@ function isNonProductionDay(plan) {
     && /domingo|sem produção/i.test(plan.warning || '');
 }
 
+function isNoProductionPlan(plan) {
+  return plan?.outcome === 'NO_PRODUCTION';
+}
+
 function planCard(plan) {
   return `<article class="window-column">
     <h3>${pp.formatDate(plan.planningDate)}</h3>
@@ -434,7 +438,7 @@ function bindPlanningNavigation() {
       }
       const refreshed = await loadPlanningData();
       state.operationNotice = refreshed
-        ? { type: 'success', message: 'Plano recalculado com sucesso.' }
+        ? recalculationSuccessNotice(recalculated)
         : operationError(`Plano recalculado, mas não foi possível recarregar o planeamento de ${pp.formatDate(state.date)}.`, state.loadError);
     } catch (error) {
       state.operationNotice = operationError(`Não foi possível recalcular o plano de ${pp.formatDate(state.date)}.`, error);
@@ -868,6 +872,7 @@ function renderDashboard() {
       </div>
       ${planningSystemNotices()}
       ${summaryPlan ? dailyHeader(summaryPlan) : '<p class="muted">Sem plano para a data selecionada.</p>'}
+      ${isNoProductionPlan(summaryPlan) ? '<p class="message info">Sem produção planeada para este dia. Não existem pedidos confirmados ou pendentes elegíveis para planeamento.</p>' : ''}
     </section>
     <section class="metric-grid metric-grid-secondary">
       ${metric('Na fábrica', d.wheelsAtFactory)}
@@ -1254,7 +1259,7 @@ async function regeneratePlan() {
     const refreshed = await loadPlanningData();
     await loadOptionalAdminData();
     state.operationNotice = refreshed
-      ? { type: 'success', message: 'Plano gerado com sucesso.' }
+      ? recalculationSuccessNotice(generated)
       : operationError(`Plano gerado, mas não foi possível recarregar o planeamento de ${pp.formatDate(state.date)}.`, state.loadError);
     render();
   } catch (error) {
@@ -2315,6 +2320,9 @@ function renderOperationNotice(notice) {
   if (notice.type === 'success') {
     return `<p class="message success">${pp.escapeHtml(notice.message)}</p>`;
   }
+  if (notice.type === 'info') {
+    return `<p class="message info">${pp.escapeHtml(notice.message)}</p>`;
+  }
   return `<div class="message error">
     <strong>${pp.escapeHtml(notice.title || 'Operação falhou.')}</strong>
     <span>${pp.escapeHtml(notice.message || 'Erro inesperado.')}</span>
@@ -2322,6 +2330,19 @@ function renderOperationNotice(notice) {
     ${technicalDetailsLink()}
     <button type="button" class="secondary" id="retry-planning-operation">Tentar novamente</button>
   </div>`;
+}
+
+function recalculationSuccessNotice(plan) {
+  if (isNoProductionPlan(plan)) {
+    return { type: 'info', message: noProductionMessage(plan) };
+  }
+  return { type: 'success', message: 'Plano recalculado com sucesso.' };
+}
+
+function noProductionMessage(plan) {
+  const date = pp.formatDate(plan?.planningDate || state.date);
+  const site = state.activeSite?.code ? ` (${state.activeSite.code})` : '';
+  return `Não existem pedidos elegíveis para produção em ${date}${site}. Não há produção planeada para este dia.`;
 }
 
 function pageNotice() {

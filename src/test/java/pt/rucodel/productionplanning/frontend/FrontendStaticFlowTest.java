@@ -150,6 +150,7 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("Ligação em tempo real indisponível", "Tentar novamente");
         assertThat(admin).contains("Ver detalhes técnicos", "/admin/system-diagnostics/realtime#settings/diagnostics");
         assertThat(admin).contains("Não existem dados de planeamento para apresentar");
+        assertThat(admin).contains("NO_PRODUCTION", "Sem produção planeada para este dia", "Não existem pedidos elegíveis para produção em");
         assertThat(admin).contains("Não foi possível estabelecer ligação à base de dados");
         assertThat(admin).contains("Não foi possível contactar o servidor do RucoPlan");
         assertThat(admin).contains("Não foi possível gerar o plano de produção", "Correlation ID", "retry-planning-operation");

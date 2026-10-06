@@ -124,13 +124,13 @@ public class MultiDayProductionPlanningService {
                                                      AvailabilityClassification availability,
                                                      RiskClassification risk) {
         if (!isProductionDay(date)) {
-            return nonProductionDayResponse(date);
+            return nonProductionDayResponse(siteCode, date);
         }
         return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
                 .map(plan -> toResponse(plan, filteredPlanLines(
                         planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()),
                         driver, customerId, status, wheelType, availability, risk)))
-                .orElseGet(() -> emptyProductionDayResponse(date));
+                .orElseGet(() -> emptyProductionDayResponse(siteCode, date));
     }
 
     @Transactional(readOnly = true)
@@ -158,11 +158,32 @@ public class MultiDayProductionPlanningService {
 
     @Transactional
     public DailyProductionPlanResponse recalculate(ProductionSiteCode siteCode, LocalDate from, GenerationTrigger trigger, String actor) {
-        if (trigger == GenerationTrigger.MANUAL && plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, from)
-                .filter(plan -> plan.getStatus() == ProductionPlanStatus.CLOSED)
-                .isPresent()) {
-            throw new InvalidRequestException("PRODUCTION_PLAN_CLOSED",
-                    "O plano de " + from + " já está fechado e não pode ser regenerado.");
+        int eligibleRequestCount = eligibleRequestCount(siteCode, from);
+        boolean hasPlanningDemand = !planningDemands(siteCode).isEmpty();
+        Optional<ProductionPlanEntity> current = plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, from);
+        if (trigger == GenerationTrigger.MANUAL && current.filter(plan -> plan.getStatus() == ProductionPlanStatus.CLOSED).isPresent()) {
+            ProductionPlanEntity closed = current.get();
+            boolean emptyClosedPlan = planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, closed.getId()).isEmpty()
+                    && closed.getTotalPlanned() == 0;
+            if (eligibleRequestCount == 0 && emptyClosedPlan) {
+                LOGGER.info("Clearing empty closed production plan with no eligible requests site={} planningDate={} planId={}",
+                        siteCode, from, closed.getId());
+                plans.clearCurrentPlanForSite(siteCode, from);
+                dashboardEvents.publishPlanUpdated(siteCode, from);
+                if (!hasPlanningDemand) {
+                    return emptyProductionDayResponse(siteCode, from);
+                }
+                current = Optional.empty();
+            }
+            if (current.filter(plan -> plan.getStatus() == ProductionPlanStatus.CLOSED).isPresent()) {
+                throw new InvalidRequestException("PRODUCTION_PLAN_CLOSED",
+                        "O plano de " + from + " já está fechado e não pode ser regenerado.");
+            }
+        }
+        if (trigger == GenerationTrigger.MANUAL && !hasPlanningDemand) {
+            plans.clearCurrentPlanForSite(siteCode, from);
+            dashboardEvents.publishPlanUpdated(siteCode, from);
+            return emptyProductionDayResponse(siteCode, from);
         }
         LocalDate to = planningHorizon(siteCode, from);
         PlanningRunEntity run = startRun(siteCode, from, to, trigger, actor);
@@ -172,7 +193,7 @@ public class MultiDayProductionPlanningService {
             run.setFinishedAt(OffsetDateTime.now(clock));
             run.setSummary("Planos recalculados de " + from + " a " + to + ".");
             planningRuns.save(run);
-            return isProductionDay(from) ? getExisting(siteCode, from) : nonProductionDayResponse(from);
+            return isProductionDay(from) ? getExistingOrEmpty(siteCode, from) : nonProductionDayResponse(siteCode, from);
         } catch (RuntimeException ex) {
             run.setStatus(PlanningRunStatus.FAILED);
             run.setFinishedAt(OffsetDateTime.now(clock));
@@ -612,15 +633,7 @@ public class MultiDayProductionPlanningService {
     }
 
     private void generateRange(ProductionSiteCode siteCode, LocalDate from, LocalDate to, GenerationTrigger trigger, String actor) {
-        List<WheelIntakeRequestEntity> openRequests = requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_REQUEST_STATUSES).stream()
-                .filter(request -> remainingQuantity(request) > 0)
-                .filter(request -> request.getExpectedFactoryDropOffWindowEnd() != null && request.getRequestedFactoryPickupWindowStart() != null)
-                .sorted(requestComparator())
-                .toList();
-        List<PlanningDemand> demands = openRequests.stream()
-                .flatMap(request -> demandsFor(request).stream())
-                .sorted(demandComparator())
-                .toList();
+        List<PlanningDemand> demands = planningDemands(siteCode);
 
         for (LocalDate date = from; !date.isAfter(to); date = date.plusDays(1)) {
             if (plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
@@ -639,9 +652,39 @@ public class MultiDayProductionPlanningService {
             EffectiveDailyTargets effectiveTargets = targetsFor(date, target);
             boolean provisional = previousDayOpen(siteCode, date);
             List<LineAllocation> allocations = allocateDay(date, demands, effectiveTargets);
+            if (allocations.isEmpty()) {
+                plans.clearCurrentPlanForSite(siteCode, date);
+                auditService.record(null, null, "NO_PRODUCTION_PLANNED", actor,
+                        "No eligible requests for production on " + date + ".");
+                LOGGER.info("No eligible production requests site={} planningDate={} trigger={}", siteCode, date, trigger);
+                dashboardEvents.publishPlanUpdated(siteCode, date);
+                continue;
+            }
             provisional = provisional || allocations.stream().anyMatch(allocation -> allocation.request().getLifecycleStatus() == LifecycleStatus.COMMUNICATED);
             savePlan(siteCode, date, allocations, effectiveTargets, provisional, trigger, actor);
         }
+    }
+
+    private List<WheelIntakeRequestEntity> openPlanningRequests(ProductionSiteCode siteCode) {
+        return requests.findOpenRequestsForPlanningForSite(siteCode, CLOSED_REQUEST_STATUSES).stream()
+                .filter(request -> remainingQuantity(request) > 0)
+                .filter(request -> request.getExpectedFactoryDropOffWindowEnd() != null && request.getRequestedFactoryPickupWindowStart() != null)
+                .sorted(requestComparator())
+                .toList();
+    }
+
+    private List<PlanningDemand> planningDemands(ProductionSiteCode siteCode) {
+        return openPlanningRequests(siteCode).stream()
+                .flatMap(request -> demandsFor(request).stream())
+                .sorted(demandComparator())
+                .toList();
+    }
+
+    private int eligibleRequestCount(ProductionSiteCode siteCode, LocalDate date) {
+        return (int) eligibleDemands(date, planningDemands(siteCode)).stream()
+                .map(demand -> demand.request.getId())
+                .distinct()
+                .count();
     }
 
     private List<LineAllocation> allocateDay(LocalDate date, List<PlanningDemand> demands, EffectiveDailyTargets target) {
@@ -817,6 +860,12 @@ public class MultiDayProductionPlanningService {
     private DailyProductionPlanResponse getExisting(ProductionSiteCode siteCode, LocalDate date) {
         ProductionPlanEntity plan = currentPlan(siteCode, date);
         return toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId()));
+    }
+
+    private DailyProductionPlanResponse getExistingOrEmpty(ProductionSiteCode siteCode, LocalDate date) {
+        return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
+                .map(plan -> toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId())))
+                .orElseGet(() -> emptyProductionDayResponse(siteCode, date));
     }
 
     private ProductionPlanEntity currentPlan(LocalDate date) {
@@ -1105,12 +1154,16 @@ public class MultiDayProductionPlanningService {
     }
 
     private DailyProductionPlanResponse nonProductionDayResponse(LocalDate date) {
-        return plans.findFirstByPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(date)
+        return nonProductionDayResponse(ProductionSiteCode.PT, date);
+    }
+
+    private DailyProductionPlanResponse nonProductionDayResponse(ProductionSiteCode siteCode, LocalDate date) {
+        return plans.findFirstByProductionSite_CodeAndPlanningDateAndCurrentPlanTrueOrderByVersionNumberDesc(siteCode, date)
                 .filter(plan -> plan.getStatus() == ProductionPlanStatus.CLOSED)
-                .map(plan -> toResponse(plan, planItems.findByPlanIdOrderByPriorityScoreAsc(plan.getId())))
+                .map(plan -> toResponse(plan, planItems.findByPlanIdForSiteOrderByPriorityScoreAsc(siteCode, plan.getId())))
                 .orElseGet(() -> {
                     return new DailyProductionPlanResponse(
-                            UUID.nameUUIDFromBytes(("non-production:" + date).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                            UUID.nameUUIDFromBytes(("non-production:" + siteCode + ":" + date).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                             date,
                             0,
                             ProductionPlanStatus.DRAFT,
@@ -1134,15 +1187,22 @@ public class MultiDayProductionPlanningService {
                             0,
                             0,
                             0,
+                            "NON_PRODUCTION_DAY",
+                            0,
+                            0,
                             List.of()
                     );
                 });
     }
 
     private DailyProductionPlanResponse emptyProductionDayResponse(LocalDate date) {
-        EffectiveDailyTargets target = targetsFor(date, targetService.effectiveFor(date));
+        return emptyProductionDayResponse(ProductionSiteCode.PT, date);
+    }
+
+    private DailyProductionPlanResponse emptyProductionDayResponse(ProductionSiteCode siteCode, LocalDate date) {
+        EffectiveDailyTargets target = targetsFor(date, targetService.effectiveFor(siteCode, date));
         return new DailyProductionPlanResponse(
-                UUID.nameUUIDFromBytes(("empty-plan:" + date).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                UUID.nameUUIDFromBytes(("empty-plan:" + siteCode + ":" + date).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 date,
                 0,
                 ProductionPlanStatus.DRAFT,
@@ -1158,12 +1218,15 @@ public class MultiDayProductionPlanningService {
                 0,
                 0,
                 false,
-                "Não existem dados de planeamento para apresentar.",
+                "Não existem pedidos elegíveis para produção nesta data. Não há produção planeada para este dia.",
                 OffsetDateTime.now(clock),
                 null,
                 null,
                 GenerationTrigger.AUTOMATIC_RECALCULATION,
                 0,
+                0,
+                0,
+                "NO_PRODUCTION",
                 0,
                 0,
                 List.of()
@@ -1394,6 +1457,9 @@ public class MultiDayProductionPlanningService {
                 plan.getOptimisticVersion(),
                 confirmedPlannedQuantity(lines),
                 unconfirmedPlannedQuantity(lines),
+                "PLANNED",
+                (int) lines.stream().map(line -> line.getRequest().getId()).distinct().count(),
+                totalPlanned,
                 lines.stream().map(this::toLineResponse).toList()
         );
     }

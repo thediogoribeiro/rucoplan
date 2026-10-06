@@ -34,6 +34,9 @@ public record DailyProductionPlanResponse(
         long version,
         int confirmedPlannedQuantity,
         int unconfirmedPlannedQuantity,
+        String outcome,
+        int eligibleRequestCount,
+        int plannedQuantity,
         List<DailyProductionPlanLineResponse> lines
 ) {
     @JsonProperty("items")
