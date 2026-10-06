@@ -18,10 +18,10 @@ app:
   integrations:
     telegram:
       enabled: true
-      bot-token:
-      bot-username: RucodelPlanBot
-      webhook-secret: test-telegram-secret
-      webhook-base-url: https://example.test
+      test-bot-token: test-token
+      test-bot-username: RucodelPlanTestBot
+      test-webhook-secret: test-telegram-secret
+      test-webhook-base-url: https://example.test
     whatsapp:
       token: test-whatsapp-token
       enabled: true

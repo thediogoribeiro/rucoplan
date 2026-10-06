@@ -1,6 +1,5 @@
 package pt.rucodel.productionplanning.telegram;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -13,11 +12,12 @@ public class TelegramHttpBotClient implements TelegramBotClient {
     private final String token;
     private final RestClient restClient;
 
-    public TelegramHttpBotClient(@Value("${app.integrations.telegram.enabled:false}") boolean enabled,
-                                 @Value("${app.integrations.telegram.bot-token:}") String token,
+    public TelegramHttpBotClient(TelegramProperties properties,
+                                 org.springframework.core.env.Environment environment,
                                  RestClient.Builder builder) {
-        this.enabled = enabled;
-        this.token = token;
+        String appEnvironment = environment.getProperty("app.environment", "local");
+        this.enabled = properties.enabled();
+        this.token = properties.botToken(appEnvironment);
         this.restClient = builder.baseUrl("https://api.telegram.org").build();
     }
 

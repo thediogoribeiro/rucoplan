@@ -1,6 +1,7 @@
 package pt.rucodel.productionplanning.service;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +12,7 @@ import pt.rucodel.productionplanning.entity.MessagingIdentityEntity;
 import pt.rucodel.productionplanning.entity.MessagingIdentityEventEntity;
 import pt.rucodel.productionplanning.repository.MessagingIdentityEventRepository;
 import pt.rucodel.productionplanning.repository.MessagingIdentityRepository;
+import pt.rucodel.productionplanning.telegram.TelegramProperties;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -29,11 +31,13 @@ public class MessagingIdentityService {
     public MessagingIdentityService(MessagingIdentityRepository identities,
                                     MessagingIdentityEventRepository events,
                                     Clock clock,
-                                    @Value("${app.integrations.telegram.bot-username:RucodelPlanBot}") String telegramBotUsername,
+                                    TelegramProperties telegramProperties,
+                                    Environment environment,
                                     @Value("${app.integrations.whatsapp.phone-number-id:}") String whatsappPhoneNumberId) {
         this.identities = identities;
         this.events = events;
         this.clock = clock;
+        String telegramBotUsername = telegramProperties.botUsername(environment.getProperty("app.environment", "local"));
         this.telegramIntegrationKey = telegramBotUsername == null || telegramBotUsername.isBlank()
                 ? DEFAULT_TELEGRAM_INTEGRATION_KEY
                 : telegramBotUsername.trim();

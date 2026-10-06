@@ -1,11 +1,12 @@
 package pt.rucodel.productionplanning.controller;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pt.rucodel.productionplanning.telegram.TelegramUpdate;
 import pt.rucodel.productionplanning.telegram.TelegramUpdateProcessor;
+import pt.rucodel.productionplanning.telegram.TelegramProperties;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -17,9 +18,10 @@ public class TelegramWebhookController {
     private final String webhookSecret;
 
     public TelegramWebhookController(TelegramUpdateProcessor processor,
-                                     @Value("${app.integrations.telegram.webhook-secret:}") String webhookSecret) {
+                                     TelegramProperties properties,
+                                     Environment environment) {
         this.processor = processor;
-        this.webhookSecret = webhookSecret;
+        this.webhookSecret = properties.webhookSecret(environment.getProperty("app.environment", "local"));
     }
 
     @PostMapping

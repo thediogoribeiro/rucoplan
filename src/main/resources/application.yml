@@ -32,7 +32,7 @@ management:
       show-details: when-authorized
 
 app:
-  environment: ${APP_ENVIRONMENT:local}
+  environment: ${APP_ENV:${APP_ENVIRONMENT:local}}
   public-base-url: ${PUBLIC_BASE_URL:}
   display-name: ${APP_DISPLAY_NAME:Rucodel Production Planning}
   timezone: ${APP_BUSINESS_TIMEZONE:Europe/Lisbon}
@@ -60,11 +60,15 @@ app:
   integrations:
     telegram:
       enabled: ${TELEGRAM_ENABLED:false}
-      bot-token: ${TELEGRAM_BOT_TOKEN:}
-      bot-username: ${TELEGRAM_BOT_USERNAME:RucodelPlanBot}
-      webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
-      webhook-base-url: ${TELEGRAM_WEBHOOK_BASE_URL:${PUBLIC_BASE_URL:}}
       webhook-auto-register: ${TELEGRAM_WEBHOOK_AUTO_REGISTER:false}
+      test-bot-token: ${TELEGRAM_TEST_BOT_TOKEN:}
+      test-bot-username: ${TELEGRAM_TEST_BOT_USERNAME:RucodelPlanTestBot}
+      test-webhook-secret: ${TELEGRAM_TEST_WEBHOOK_SECRET:}
+      test-webhook-base-url: ${TELEGRAM_TEST_WEBHOOK_URL:${TELEGRAM_TEST_WEBHOOK_BASE_URL:}}
+      production-bot-token: ${TELEGRAM_PRODUCTION_BOT_TOKEN:}
+      production-bot-username: ${TELEGRAM_PRODUCTION_BOT_USERNAME:RucodelPlanBot}
+      production-webhook-secret: ${TELEGRAM_PRODUCTION_WEBHOOK_SECRET:}
+      production-webhook-base-url: ${TELEGRAM_PRODUCTION_WEBHOOK_URL:${TELEGRAM_PRODUCTION_WEBHOOK_BASE_URL:${PUBLIC_BASE_URL:}}}
     whatsapp:
       token: ${APP_WHATSAPP_INTEGRATION_TOKEN:}
       enabled: ${WHATSAPP_ENABLED:false}

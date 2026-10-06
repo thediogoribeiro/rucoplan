@@ -140,12 +140,12 @@ register_telegram_webhook_if_ready() {
     return
   fi
 
-  if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_WEBHOOK_SECRET:-}" ]]; then
-    echo "Telegram webhook was not registered because TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET is missing."
+  if [[ -z "${TELEGRAM_TEST_BOT_TOKEN:-}" || -z "${TELEGRAM_TEST_WEBHOOK_SECRET:-}" ]]; then
+    echo "Telegram webhook was not registered because TELEGRAM_TEST_BOT_TOKEN or TELEGRAM_TEST_WEBHOOK_SECRET is missing."
     return
   fi
 
-  TELEGRAM_WEBHOOK_BASE_URL="${TELEGRAM_WEBHOOK_BASE_URL}" "${SCRIPT_DIR}/register-telegram-webhook.sh"
+  TELEGRAM_TEST_WEBHOOK_URL="${TELEGRAM_TEST_WEBHOOK_URL}" "${SCRIPT_DIR}/register-telegram-webhook.sh"
 }
 
 start_with_ngrok() {
@@ -158,9 +158,9 @@ start_with_ngrok() {
   : > "${NGROK_LOG}"
 
   NGROK_ARGS=("http" "${SERVER_PORT}" "--log=stdout")
-  if [[ -n "${TELEGRAM_WEBHOOK_BASE_URL:-}" ]]; then
-    NGROK_ARGS+=("--url" "${TELEGRAM_WEBHOOK_BASE_URL%/}")
-    echo "Starting ngrok tunnel for http://localhost:${SERVER_PORT} using TELEGRAM_WEBHOOK_BASE_URL from .env..."
+  if [[ -n "${TELEGRAM_TEST_WEBHOOK_URL:-}" ]]; then
+    NGROK_ARGS+=("--url" "${TELEGRAM_TEST_WEBHOOK_URL%/}")
+    echo "Starting ngrok tunnel for http://localhost:${SERVER_PORT} using TELEGRAM_TEST_WEBHOOK_URL from .env..."
   else
     echo "Starting ngrok tunnel for http://localhost:${SERVER_PORT} with a temporary public URL..."
   fi
@@ -169,10 +169,10 @@ start_with_ngrok() {
   NGROK_PID="$!"
   trap cleanup_ngrok EXIT INT TERM
 
-  TELEGRAM_WEBHOOK_BASE_URL="$(wait_for_ngrok_url)"
-  export TELEGRAM_WEBHOOK_BASE_URL
+  TELEGRAM_TEST_WEBHOOK_URL="$(wait_for_ngrok_url)"
+  export TELEGRAM_TEST_WEBHOOK_URL
 
-  echo "ngrok public URL: ${TELEGRAM_WEBHOOK_BASE_URL}"
+  echo "ngrok public URL: ${TELEGRAM_TEST_WEBHOOK_URL}"
   register_telegram_webhook_if_ready
   start_backend
 }

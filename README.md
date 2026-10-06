@@ -158,6 +158,7 @@ Required Heroku config vars:
 
 ```bash
 heroku config:set SPRING_PROFILES_ACTIVE=production
+heroku config:set APP_ENV=production
 heroku config:set APP_ENVIRONMENT=production
 heroku config:set APP_AUTH_MODE=DATABASE
 heroku config:set PUBLIC_BASE_URL=https://your-app.herokuapp.com
@@ -202,35 +203,55 @@ If an existing production database already contains unwanted data, do not run au
 
 ## Telegram Webhook
 
-ngrok is only for local development. In local mode, set `TELEGRAM_WEBHOOK_BASE_URL` externally to the current ngrok HTTPS URL:
+Telegram uses two separated bot configurations:
+
+- local/test bot: `TELEGRAM_TEST_*`, loaded only when `APP_ENV=local` or `APP_ENVIRONMENT=local`;
+- production bot: `TELEGRAM_PRODUCTION_*`, loaded only when `APP_ENV=production` or `APP_ENVIRONMENT=production`.
+
+The webhook endpoint is `POST /api/v1/integrations/telegram/webhook`. The same Telegram flow and state machine are used by both bots; only token, username, webhook URL and webhook secret vary by environment.
+
+Local development with ngrok:
 
 ```bash
-TELEGRAM_ENABLED=true TELEGRAM_WEBHOOK_BASE_URL=https://example.ngrok.app scripts/start-local-stack.sh ngrok
+TELEGRAM_ENABLED=true TELEGRAM_TEST_WEBHOOK_URL=https://example.ngrok.app scripts/start-local-stack.sh ngrok
 scripts/telegram-webhook-register
 scripts/telegram-webhook-info
 scripts/telegram-webhook-delete
 ```
 
-In Heroku production, set `PUBLIC_BASE_URL` to the public HTTPS app or custom domain and leave ngrok unset:
+Heroku production must use Config Vars, not local `.env`:
 
 ```bash
-heroku config:set TELEGRAM_ENABLED=true
-heroku config:set TELEGRAM_BOT_TOKEN=replace-with-production-bot-token
-heroku config:set TELEGRAM_WEBHOOK_SECRET=replace-with-random-secret
-heroku config:set TELEGRAM_WEBHOOK_AUTO_REGISTER=true
+heroku config:set \
+  SPRING_PROFILES_ACTIVE=production \
+  APP_ENV=production \
+  APP_ENVIRONMENT=production \
+  TELEGRAM_ENABLED=true \
+  TELEGRAM_PRODUCTION_BOT_TOKEN='<token-do-bot-de-producao>' \
+  TELEGRAM_PRODUCTION_BOT_USERNAME='<username-do-bot-de-producao>' \
+  TELEGRAM_PRODUCTION_WEBHOOK_SECRET='<secret-producao>' \
+  TELEGRAM_PRODUCTION_WEBHOOK_URL='https://<nome-app>.herokuapp.com' \
+  TELEGRAM_WEBHOOK_AUTO_REGISTER=true \
+  --app <nome-da-app>
 ```
 
-Manual webhook commands use environment variables and never require tokens in source files:
+Manual webhook commands with placeholders:
 
 ```bash
-PUBLIC_BASE_URL=https://your-app.herokuapp.com TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... scripts/telegram-webhook-register
-TELEGRAM_BOT_TOKEN=... scripts/telegram-webhook-info
-TELEGRAM_BOT_TOKEN=... scripts/telegram-webhook-delete
+curl -X POST \
+  "https://api.telegram.org/bot<TOKEN_DO_BOT_TESTE>/setWebhook" \
+  -d "url=https://<SUBDOMINIO_NGROK>/api/v1/integrations/telegram/webhook" \
+  -d "secret_token=<SECRET_LOCAL>"
+
+curl -X POST \
+  "https://api.telegram.org/bot<TOKEN_DO_BOT_PRODUCAO>/setWebhook" \
+  -d "url=https://<NOME_APP>.herokuapp.com/api/v1/integrations/telegram/webhook" \
+  -d "secret_token=<SECRET_PRODUCAO>"
 ```
 
-One Telegram bot can have only one active webhook at a time. Use different bot tokens for local and production, or explicitly switch the webhook when testing.
+Each bot has its own active webhook, so local and production can receive messages at the same time. The backend validates `X-Telegram-Bot-Api-Secret-Token`, rejects invalid secrets, stores each `update_id`, and returns successfully processed duplicate updates without creating duplicate requests.
 
-The backend validates `X-Telegram-Bot-Api-Secret-Token`, rejects invalid secrets, stores each `update_id`, and returns successfully processed duplicate updates without creating duplicate requests.
+See `docs/integrations/telegram.md` for the full operational runbook.
 
 ## Production-Site Isolation
 

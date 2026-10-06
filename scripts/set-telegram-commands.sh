@@ -11,7 +11,14 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-: "${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}"
+APP_ENVIRONMENT_EFFECTIVE="${APP_ENV:-${APP_ENVIRONMENT:-local}}"
+if [[ "${APP_ENVIRONMENT_EFFECTIVE}" == "production" ]]; then
+  TELEGRAM_ACTIVE_BOT_TOKEN="${TELEGRAM_PRODUCTION_BOT_TOKEN:-}"
+else
+  TELEGRAM_ACTIVE_BOT_TOKEN="${TELEGRAM_TEST_BOT_TOKEN:-}"
+fi
+
+: "${TELEGRAM_ACTIVE_BOT_TOKEN:?Telegram bot token is required for the active environment}"
 
 COMMANDS='[
   {"command":"start","description":"Iniciar ou retomar o registo"},
@@ -25,7 +32,7 @@ curl --fail --silent --show-error \
   --request POST \
   --header "Content-Type: application/json" \
   --data "{\"commands\":${COMMANDS}}" \
-  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" >/tmp/rucodel-telegram-commands-response.json
+  "https://api.telegram.org/bot${TELEGRAM_ACTIVE_BOT_TOKEN}/setMyCommands" >/tmp/rucodel-telegram-commands-response.json
 
-echo "Comandos Telegram configurados."
+echo "Comandos Telegram configurados no ambiente ${APP_ENVIRONMENT_EFFECTIVE}."
 echo "Resposta guardada em /tmp/rucodel-telegram-commands-response.json."

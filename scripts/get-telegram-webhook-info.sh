@@ -11,7 +11,14 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-: "${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}"
+APP_ENVIRONMENT_EFFECTIVE="${APP_ENV:-${APP_ENVIRONMENT:-local}}"
+if [[ "${APP_ENVIRONMENT_EFFECTIVE}" == "production" ]]; then
+  TELEGRAM_ACTIVE_BOT_TOKEN="${TELEGRAM_PRODUCTION_BOT_TOKEN:-}"
+else
+  TELEGRAM_ACTIVE_BOT_TOKEN="${TELEGRAM_TEST_BOT_TOKEN:-}"
+fi
+
+: "${TELEGRAM_ACTIVE_BOT_TOKEN:?Telegram bot token is required for the active environment}"
 
 curl --fail --silent --show-error \
-  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+  "https://api.telegram.org/bot${TELEGRAM_ACTIVE_BOT_TOKEN}/getWebhookInfo"

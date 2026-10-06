@@ -108,7 +108,7 @@ class TelegramFlowIntegrationTest {
         assertThat(bot.last()).contains("Bem-vindo ao Rucodel Bot", "qual é o seu nome");
         assertThat(drivers.findByTelegramUserId(9001L)).isEmpty();
         MessagingIdentityEntity identity = messagingIdentities
-                .findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9001")
+                .findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanTestBot", "9001")
                 .orElseThrow();
         assertThat(identity.getDriver()).isNull();
         assertThat(identity.getOnboardingStatus()).isEqualTo(MessagingIdentityOnboardingStatus.AWAITING_DRIVER_NAME);
@@ -120,7 +120,7 @@ class TelegramFlowIntegrationTest {
         assertThat(driver.getTelegramChatId()).isEqualTo(7001L);
         assertThat(driver.getTelegramUsername()).isEqualTo("olduser");
         identity = messagingIdentities
-                .findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9001")
+                .findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanTestBot", "9001")
                 .orElseThrow();
         assertThat(identity.getDriver().getId()).isEqualTo(driver.getId());
         assertThat(identity.getOnboardingStatus()).isEqualTo(MessagingIdentityOnboardingStatus.COMPLETED);
@@ -135,7 +135,7 @@ class TelegramFlowIntegrationTest {
         assertThat(drivers.findAll()).hasSize(1);
         assertThat(messagingIdentities.findAll()).hasSize(1);
         assertThat(drivers.findByTelegramUserId(9001L).orElseThrow().getTelegramUsername()).isEqualTo("newuser");
-        assertThat(messagingIdentities.findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9001")
+        assertThat(messagingIdentities.findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanTestBot", "9001")
                 .orElseThrow().getExternalUsername()).isEqualTo("newuser");
         assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("Vamos retomar"));
     }
@@ -389,7 +389,7 @@ class TelegramFlowIntegrationTest {
 
         contact(54, 9501L, 7501L, 9999L, "+351 912 345 678");
         assertThat(bot.messages()).anySatisfy(message -> assertThat(message.text()).contains("contacto de outra pessoa"));
-        assertThat(messagingIdentities.findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanBot", "9501")
+        assertThat(messagingIdentities.findByChannelAndIntegrationKeyAndExternalUserId(MessagingChannel.TELEGRAM, "RucodelPlanTestBot", "9501")
                 .orElseThrow().getPhoneNumber()).isNull();
     }
 
