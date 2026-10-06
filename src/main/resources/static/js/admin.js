@@ -32,6 +32,12 @@ const state = {
   busy: {},
   operationNotice: null,
   pageNotice: null,
+  formErrors: {},
+  formDrafts: {
+    manualRequest: {},
+    customer: {},
+    driver: {}
+  },
   reopenClosure: null,
   highlightedClosureLineId: null,
   manualOrder: {
@@ -888,6 +894,7 @@ function renderDashboard() {
 }
 
 function renderNewRequest() {
+  const draft = state.formDrafts.manualRequest || {};
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
       <div class="section-header">
@@ -907,17 +914,17 @@ function renderNewRequest() {
             </select>
           </label>
           <div class="${state.manualOrder.mode === 'new' ? 'hidden' : ''}">
-            <label>Cliente existente<input name="customerSearch" list="manual-customers" placeholder="Pesquisar cliente por nome ou código"></label>
+            <label>Cliente existente<input name="customerSearch" list="manual-customers" placeholder="Pesquisar cliente por nome ou código" value="${pp.escapeHtml(draft.customerSearch || '')}" class="${fieldErrorClass('manualRequest', 'customerReferenceId')}">${fieldErrorMarkup('manualRequest', 'customerReferenceId')}</label>
             <datalist id="manual-customers">
               ${state.customers.map(customer => `<option value="${pp.escapeHtml(customer.customerCode || '')} · ${pp.escapeHtml(customer.name)}"></option>`).join('')}
             </datalist>
           </div>
           <div class="${state.manualOrder.mode === 'new' ? '' : 'hidden'}">
-            <label>Nome<input name="newCustomerName"></label>
-            <label>NIF/VAT<input name="newCustomerTaxIdentifier"></label>
-            <label>País<input name="newCustomerCountryName" maxlength="120" value="${pp.escapeHtml(defaultCountryName())}"></label>
-            <label>Localidade<input name="newCustomerLocality"></label>
-            <label>ID RucoFi opcional<input name="newCustomerRucofiId"></label>
+            <label>Nome<input name="newCustomerName" value="${pp.escapeHtml(draft.newCustomerName || '')}" class="${fieldErrorClass('manualRequest', 'name')}">${fieldErrorMarkup('manualRequest', 'name')}</label>
+            <label>NIF/VAT<input name="newCustomerTaxIdentifier" value="${pp.escapeHtml(draft.newCustomerTaxIdentifier || '')}" class="${fieldErrorClass('manualRequest', 'taxIdentifier')}">${fieldErrorMarkup('manualRequest', 'taxIdentifier')}</label>
+            <label>País<input name="newCustomerCountryName" maxlength="120" value="${pp.escapeHtml(draft.newCustomerCountryName ?? defaultCountryName())}" class="${fieldErrorClass('manualRequest', 'countryName')}">${fieldErrorMarkup('manualRequest', 'countryName')}</label>
+            <label>Localidade<input name="newCustomerLocality" value="${pp.escapeHtml(draft.newCustomerLocality || '')}"></label>
+            <label>ID RucoFi opcional<input name="newCustomerRucofiId" value="${pp.escapeHtml(draft.newCustomerRucofiId || '')}"></label>
           </div>
         </fieldset>
         <fieldset>
@@ -925,38 +932,39 @@ function renderNewRequest() {
           <label>Motorista, se aplicável
             <select name="driverId">
               <option value="">Sem motorista</option>
-              ${state.drivers.map(driver => `<option value="${pp.escapeHtml(driver.id)}">${pp.escapeHtml(driver.driverCode || '')} · ${pp.escapeHtml(driver.name)}</option>`).join('')}
+              ${state.drivers.map(driver => `<option value="${pp.escapeHtml(driver.id)}" ${draft.driverId === driver.id ? 'selected' : ''}>${pp.escapeHtml(driver.driverCode || '')} · ${pp.escapeHtml(driver.name)}</option>`).join('')}
             </select>
+            ${fieldErrorMarkup('manualRequest', 'driverId')}
           </label>
         </fieldset>
         <fieldset>
           <legend>Quantidades</legend>
           ${state.activeSite?.code === 'LUX'
             ? '<input name="bipartiteQuantity" type="hidden" value="0"><p class="muted wide">Luxemburgo processa apenas jantes lavadas e normais.</p>'
-            : '<label>Jantes bipartidas<input name="bipartiteQuantity" type="number" min="0" step="1" value="0"></label>'}
-          <label>Jantes lavadas<input name="washedQuantity" type="number" min="0" step="1" value="0"></label>
-          <label>Jantes normais<input name="normalQuantity" type="number" min="0" step="1" value="0"></label>
+            : `<label>Jantes bipartidas<input name="bipartiteQuantity" type="number" min="0" step="1" value="${pp.escapeHtml(draft.bipartiteQuantity || '0')}" class="${fieldErrorClass('manualRequest', 'bipartiteQuantity')}">${fieldErrorMarkup('manualRequest', 'bipartiteQuantity')}</label>`}
+          <label>Jantes lavadas<input name="washedQuantity" type="number" min="0" step="1" value="${pp.escapeHtml(draft.washedQuantity || '0')}" class="${fieldErrorClass('manualRequest', 'wheelQuantities')}">${fieldErrorMarkup('manualRequest', 'wheelQuantities')}</label>
+          <label>Jantes normais<input name="normalQuantity" type="number" min="0" step="1" value="${pp.escapeHtml(draft.normalQuantity || '0')}"></label>
           <p class="muted wide" id="manual-total">Total de jantes: 0</p>
         </fieldset>
         <fieldset>
           <legend>Situação da chegada</legend>
           <label>As jantes já estão na fábrica?
             <select name="alreadyAtFactory" id="manual-already-at-factory">
-              <option value="true" selected>Sim</option>
-              <option value="false">Não</option>
+              <option value="true" ${draft.alreadyAtFactory !== 'false' ? 'selected' : ''}>Sim</option>
+              <option value="false" ${draft.alreadyAtFactory === 'false' ? 'selected' : ''}>Não</option>
             </select>
           </label>
-          <div id="manual-arrival-real"><label>Chegada real<input name="actualArrivalAt" type="datetime-local"></label></div>
+          <div id="manual-arrival-real"><label>Chegada real<input name="actualArrivalAt" type="datetime-local" value="${pp.escapeHtml(draft.actualArrivalAt || '')}"></label></div>
           <div id="manual-arrival-expected" class="hidden">
-            <label>Data prevista de chegada<input name="expectedFactoryDropoffDate" type="date"></label>
+            <label>Data prevista de chegada<input name="expectedFactoryDropoffDate" type="date" value="${pp.escapeHtml(draft.expectedFactoryDropoffDate || '')}"></label>
             <label>Intervalo previsto<select name="expectedFactoryDropoffWindow">${slotOptions()}</select></label>
           </div>
         </fieldset>
         <fieldset>
           <legend>Levantamento</legend>
-          <label>Data pretendida<input name="requestedPickupDate" type="date" required></label>
+          <label>Data pretendida<input name="requestedPickupDate" type="date" required value="${pp.escapeHtml(draft.requestedPickupDate || '')}">${fieldErrorMarkup('manualRequest', 'requestedPickupDate')}</label>
           <label>Intervalo de levantamento<select name="requestedPickupWindow">${slotOptions()}</select></label>
-          <label class="wide">Notas<textarea name="notes" rows="3"></textarea></label>
+          <label class="wide">Notas<textarea name="notes" rows="3">${pp.escapeHtml(draft.notes || '')}</textarea></label>
         </fieldset>
         <section class="message info wide" id="manual-summary">Preencha os dados para ver o resumo antes de criar o pedido.</section>
         <div class="actions wide"><button type="submit" ${state.busy.createManualRequest ? 'disabled' : ''}>${state.busy.createManualRequest ? 'A criar...' : 'Criar pedido'}</button></div>
@@ -977,10 +985,15 @@ function bindNewRequestForm() {
     renderNewRequest();
   });
   document.querySelector('#manual-already-at-factory')?.addEventListener('change', updateManualArrivalVisibility);
-  form?.querySelectorAll('input, select, textarea').forEach(input => input.addEventListener('input', updateManualSummary));
+  form?.querySelectorAll('input, select, textarea').forEach(input => input.addEventListener('input', () => {
+    captureFormDraft(form, 'manualRequest');
+    clearFieldError('manualRequest', input.name);
+    updateManualSummary();
+  }));
   form?.addEventListener('submit', createManualRequest);
   const arrivalInput = form?.querySelector('[name="actualArrivalAt"]');
   if (arrivalInput && !arrivalInput.value) arrivalInput.value = localDateTimeInputValue(new Date());
+  if (form) captureFormDraft(form, 'manualRequest');
   updateManualArrivalVisibility();
   updateManualSummary();
 }
@@ -1016,6 +1029,7 @@ async function createManualRequest(event) {
   event.preventDefault();
   const form = event.currentTarget;
   try {
+    captureFormDraft(form, 'manualRequest');
     state.busy.createManualRequest = true;
     let customerId = null;
     if (form.customerMode.value === 'new') {
@@ -1047,13 +1061,16 @@ async function createManualRequest(event) {
       notes: form.notes.value
     });
     state.pageNotice = { type: 'success', message: `Pedido ${created.requestCode || ''} criado com sucesso.` };
+    state.formErrors.manualRequest = [];
+    state.formDrafts.manualRequest = {};
     await loadAdminData();
     state.view = 'requests';
     history.replaceState(null, '', `${location.pathname}${location.search}#requests`);
     syncNavigation();
     render();
   } catch (error) {
-    state.pageNotice = { type: 'error', message: error.message || 'Não foi possível criar o pedido manual.' };
+    applyOperationError('manualRequest', error, 'Não foi possível criar o pedido manual.');
+    state.busy.createManualRequest = false;
     renderNewRequest();
   } finally {
     state.busy.createManualRequest = false;
@@ -1633,6 +1650,7 @@ async function saveSettings(event) {
 }
 
 function renderDrivers() {
+  const draft = state.formDrafts.driver || {};
   const query = (state.driverIdentityQuery || '').toLowerCase();
   const identities = state.messagingIdentities.filter(identity => {
     const haystack = [
@@ -1651,11 +1669,11 @@ function renderDrivers() {
       <div class="section-header"><h2>Motoristas e ligações</h2></div>
       ${pageNotice()}
       <form id="driver-form" class="form-grid">
-        <label>ID RucoFi opcional<input name="rucofiId"></label>
-        <label>Nome<input name="name" required></label>
-        <label>Utilizador<input name="username"></label>
-        <label>Palavra-passe<input name="password" type="password"></label>
-        <button type="submit">Criar motorista</button>
+        <label>ID RucoFi opcional<input name="rucofiId" value="${pp.escapeHtml(draft.rucofiId || '')}"></label>
+        <label>Nome<input name="name" required value="${pp.escapeHtml(draft.name || '')}" class="${fieldErrorClass('driver', 'name')}">${fieldErrorMarkup('driver', 'name')}</label>
+        <label>Utilizador<input name="username" value="${pp.escapeHtml(draft.username || '')}" class="${fieldErrorClass('driver', 'username')}">${fieldErrorMarkup('driver', 'username')}</label>
+        <label>Palavra-passe<input name="password" type="password" value="${pp.escapeHtml(draft.password || '')}"></label>
+        <button type="submit" ${state.busy.createDriver ? 'disabled' : ''}>${state.busy.createDriver ? 'A criar...' : 'Criar motorista'}</button>
       </form>
       <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Código RucoPlan</th><th>Nome</th><th>ID RucoFi</th><th>Identidade Telegram</th><th>Contacto</th><th>Estado</th><th>Primeira ligação</th><th>Última atividade</th><th>Ações</th></tr></thead><tbody>
         ${state.drivers.map(driver => {
@@ -1698,7 +1716,10 @@ function renderDrivers() {
         </tr>`).join('')}</tbody>
       </table></div>
     </section>`;
-  document.querySelector('#driver-form').addEventListener('submit', createDriver);
+  const form = document.querySelector('#driver-form');
+  bindFieldErrorClearing(form, 'driver');
+  form?.querySelectorAll('input, select, textarea').forEach(input => input.addEventListener('input', () => captureFormDraft(form, 'driver')));
+  form?.addEventListener('submit', createDriver);
   document.querySelector('#identity-search')?.addEventListener('input', event => {
     state.driverIdentityQuery = event.target.value;
     renderDrivers();
@@ -1718,15 +1739,31 @@ function driverPrimaryIdentity(driverId) {
 async function createDriver(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await api.postJson('/api/v1/admin/drivers', {
-    rucofiId: form.rucofiId.value.trim(),
-    name: form.name.value.trim(),
-    active: true,
-    username: form.username.value.trim(),
-    password: form.password.value
-  });
-  await loadAdminData();
+  if (state.busy.createDriver) return;
+  captureFormDraft(form, 'driver');
+  state.busy.createDriver = true;
   renderDrivers();
+  try {
+    await api.postJson('/api/v1/admin/drivers', {
+      rucofiId: form.rucofiId.value.trim(),
+      name: form.name.value.trim(),
+      active: true,
+      username: form.username.value.trim(),
+      password: form.password.value
+    });
+    state.formErrors.driver = [];
+    state.formDrafts.driver = {};
+    state.pageNotice = { type: 'success', message: 'Motorista criado com sucesso.' };
+    await loadAdminData();
+    state.busy.createDriver = false;
+    renderDrivers();
+  } catch (error) {
+    applyOperationError('driver', error, 'Não foi possível criar o motorista.');
+    state.busy.createDriver = false;
+    renderDrivers();
+  } finally {
+    state.busy.createDriver = false;
+  }
 }
 
 async function renameDriver(id) {
@@ -1776,6 +1813,7 @@ async function linkIdentity(id) {
 }
 
 function renderCustomers() {
+  const draft = state.formDrafts.customer || {};
   document.querySelector('#admin-app').innerHTML = `
     <section class="panel">
       <div class="section-header"><h2>Clientes pendentes</h2></div>
@@ -1785,11 +1823,11 @@ function renderCustomers() {
     <section class="panel">
       <div class="section-header"><h2>Clientes locais</h2></div>
       <form id="customer-form" class="form-grid">
-        <label>Nome<input name="name" required></label>
-        <label>NIF/VAT<input name="taxIdentifier"></label>
-        <label>País<input name="countryName" maxlength="120" value="${pp.escapeHtml(defaultCountryName())}" required></label>
-        <label>Localidade<input name="locality"></label>
-        <label>ID RucoFi opcional<input name="rucofiId"></label>
+        <label>Nome<input name="name" required value="${pp.escapeHtml(draft.name || '')}" class="${fieldErrorClass('customer', 'name')}">${fieldErrorMarkup('customer', 'name')}</label>
+        <label>NIF/VAT<input name="taxIdentifier" value="${pp.escapeHtml(draft.taxIdentifier || '')}" class="${fieldErrorClass('customer', 'taxIdentifier')}">${fieldErrorMarkup('customer', 'taxIdentifier')}</label>
+        <label>País<input name="countryName" maxlength="120" value="${pp.escapeHtml(draft.countryName ?? defaultCountryName())}" required class="${fieldErrorClass('customer', 'countryName')}">${fieldErrorMarkup('customer', 'countryName')}</label>
+        <label>Localidade<input name="locality" value="${pp.escapeHtml(draft.locality || '')}"></label>
+        <label>ID RucoFi opcional<input name="rucofiId" value="${pp.escapeHtml(draft.rucofiId || '')}"></label>
         <button type="submit" ${state.busy.createCustomer ? 'disabled' : ''}>${state.busy.createCustomer ? 'A criar...' : 'Criar cliente'}</button>
         <p id="customer-message" class="message hidden wide" role="alert"></p>
       </form>
@@ -1806,7 +1844,10 @@ function renderCustomers() {
         </tr>`).join('')}
       </tbody></table></div>
     </section>`;
-  document.querySelector('#customer-form').addEventListener('submit', createCustomer);
+  const form = document.querySelector('#customer-form');
+  bindFieldErrorClearing(form, 'customer');
+  form?.querySelectorAll('input, select, textarea').forEach(input => input.addEventListener('input', () => captureFormDraft(form, 'customer')));
+  form?.addEventListener('submit', createCustomer);
   document.querySelectorAll('[data-registration-link]').forEach(button => button.addEventListener('click', () => linkCustomerRegistration(button.dataset.registrationLink)));
   document.querySelectorAll('[data-registration-reject]').forEach(button => button.addEventListener('click', () => rejectCustomerRegistration(button.dataset.registrationReject)));
 }
@@ -1865,6 +1906,8 @@ async function createCustomer(event) {
   const form = event.currentTarget;
   const message = document.querySelector('#customer-message');
   const submit = form.querySelector('button[type="submit"]');
+  if (state.busy.createCustomer) return;
+  captureFormDraft(form, 'customer');
   pp.hideMessage(message);
   state.busy.createCustomer = true;
   submit.disabled = true;
@@ -1881,14 +1924,20 @@ async function createCustomer(event) {
     });
     await loadAdminData();
     state.busy.createCustomer = false;
+    state.formErrors.customer = [];
+    state.formDrafts.customer = {};
+    state.pageNotice = { type: 'success', message: `Cliente criado com o código ${created.customerCode}.` };
     renderCustomers();
-    pp.showMessage(document.querySelector('#customer-message'), `Cliente criado com o código ${created.customerCode}.`, 'success');
   } catch (error) {
-    pp.showMessage(message, error.message || 'Não foi possível criar o cliente.');
+    applyOperationError('customer', error, 'Não foi possível criar o cliente.');
+    state.busy.createCustomer = false;
+    renderCustomers();
   } finally {
     state.busy.createCustomer = false;
-    submit.disabled = false;
-    submit.textContent = 'Criar cliente';
+    if (submit.isConnected) {
+      submit.disabled = false;
+      submit.textContent = 'Criar cliente';
+    }
   }
 }
 
@@ -2279,7 +2328,48 @@ function pageNotice() {
   if (!state.pageNotice) {
     return '';
   }
-  return `<p class="message ${pp.escapeHtml(state.pageNotice.type || 'info')}">${pp.escapeHtml(state.pageNotice.message || '')}</p>`;
+  return `<p class="message ${pp.escapeHtml(state.pageNotice.type || 'info')}" role="alert" aria-live="assertive">${pp.escapeHtml(state.pageNotice.message || '')}</p>`;
+}
+
+function errorFor(formKey, field) {
+  return (state.formErrors?.[formKey] || []).find(error => error.field === field)?.message || '';
+}
+
+function fieldErrorMarkup(formKey, field) {
+  const message = errorFor(formKey, field);
+  return message ? `<small class="field-error" role="alert">${pp.escapeHtml(message)}</small>` : '';
+}
+
+function fieldErrorClass(formKey, field) {
+  return errorFor(formKey, field) ? ' field-invalid' : '';
+}
+
+function captureFormDraft(form, formKey) {
+  state.formDrafts[formKey] = Object.fromEntries([...new FormData(form).entries()]);
+}
+
+function applyOperationError(formKey, error, fallback) {
+  state.formErrors[formKey] = error.fieldErrors || [];
+  state.pageNotice = {
+    type: 'error',
+    message: error.message || fallback || 'Não foi possível concluir a operação.'
+  };
+}
+
+function clearFieldError(formKey, field) {
+  const aliases = {
+    newCustomerName: ['newCustomerName', 'name'],
+    newCustomerTaxIdentifier: ['newCustomerTaxIdentifier', 'taxIdentifier'],
+    newCustomerCountryName: ['newCustomerCountryName', 'countryName'],
+    customerSearch: ['customerSearch', 'customerReferenceId'],
+    washedQuantity: ['washedQuantity', 'wheelQuantities'],
+    normalQuantity: ['normalQuantity', 'wheelQuantities']
+  }[field] || [field];
+  state.formErrors[formKey] = (state.formErrors[formKey] || []).filter(error => !aliases.includes(error.field));
+}
+
+function bindFieldErrorClearing(form, formKey) {
+  form?.querySelectorAll('input, select, textarea').forEach(input => input.addEventListener('input', () => clearFieldError(formKey, input.name)));
 }
 
 function normalizeError(error) {

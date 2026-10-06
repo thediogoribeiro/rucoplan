@@ -90,6 +90,19 @@ public interface CustomerReferenceRepository extends JpaRepository<CustomerRefer
                                                                     @Param("countryCode") String countryCode);
 
     @Query("""
+            select count(c) > 0 from CustomerReferenceEntity c
+            where c.productionSite.code = :siteCode
+              and c.active = true
+              and c.normalizedName = :normalizedName
+              and c.taxIdentifier = :taxIdentifier
+              and (:excludedId is null or c.id <> :excludedId)
+            """)
+    boolean existsActiveByNormalizedNameAndTaxIdentifierForSite(@Param("siteCode") ProductionSiteCode siteCode,
+                                                               @Param("normalizedName") String normalizedName,
+                                                               @Param("taxIdentifier") String taxIdentifier,
+                                                               @Param("excludedId") UUID excludedId);
+
+    @Query("""
             select c from CustomerReferenceEntity c
             where c.productionSite.code = :siteCode
               and c.externalSystem = :externalSystem

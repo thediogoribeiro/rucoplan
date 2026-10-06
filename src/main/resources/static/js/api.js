@@ -57,14 +57,19 @@ async function request(path, options = {}) {
       payload = await response.json();
       message = [payload.detail, payload.message, ...(payload.details || [])].filter(Boolean).join(' ');
     } catch (_) {}
+    const correlationId = payload?.correlationId || response.headers.get('X-Correlation-ID') || headers.get('X-Correlation-ID');
+    if (correlationId && !message.includes(correlationId)) {
+      message = `${message || 'Não foi possível concluir a operação.'} Correlation ID: ${correlationId}`;
+    }
     const error = new Error(message);
     error.code = payload?.code
       || payload?.error
       || (response.status === 401 ? 'UNAUTHORIZED' : response.status === 403 ? 'FORBIDDEN' : response.status === 503 ? 'BACKEND_UNAVAILABLE' : 'HTTP_ERROR');
-    error.correlationId = payload?.correlationId || response.headers.get('X-Correlation-ID') || headers.get('X-Correlation-ID');
+    error.correlationId = correlationId;
     error.status = response.status;
     error.endpoint = path;
     error.timestamp = payload?.timestamp || new Date().toISOString();
+    error.fieldErrors = payload?.fieldErrors || [];
     error.payload = payload;
     throw error;
   }

@@ -816,6 +816,17 @@ button.list-item:hover { background: var(--soft); }
 
 .driver-summary .metric { min-height: 72px; }
 
+.field-invalid {
+  border-color: #b42318;
+}
+
+.field-error {
+  display: block;
+  color: #b42318;
+  font-size: .78rem;
+  margin-top: 4px;
+}
+
 .print-shell { padding: 24px; }
 
 .print-header {

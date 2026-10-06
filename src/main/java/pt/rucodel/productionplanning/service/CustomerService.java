@@ -133,6 +133,15 @@ public class CustomerService {
         entity.setLocality(blankToNull(request.locality()));
         entity.setActive(request.active() == null || request.active());
         entity.setStatus(entity.isActive() ? CustomerStatus.ACTIVE : CustomerStatus.INACTIVE);
+        if (entity.getTaxIdentifier() != null
+                && customers.existsActiveByNormalizedNameAndTaxIdentifierForSite(
+                entity.getProductionSite().getCode(),
+                entity.getNormalizedName(),
+                entity.getTaxIdentifier(),
+                entity.getId())) {
+            throw new InvalidRequestException("CUSTOMER_DUPLICATE_NAME_VAT",
+                    "Já existe um cliente com este nome e NIF nesta unidade.");
+        }
     }
 
     private String blankToNull(String value) {

@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 public record DriverRequest(
         String externalId,
         String rucofiId,
-        @NotBlank String name,
+        @NotBlank(message = "O nome do motorista é obrigatório.") String name,
         Boolean active,
         Long version,
         String username,

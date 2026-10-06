@@ -38,8 +38,8 @@ class DefaultPlanningTargetInitializerIntegrationTest {
         assertThat(targetConfigurations.findAllByProductionSite_CodeOrderByEffectiveFromDescCreatedAtDesc(ProductionSiteCode.LUX))
                 .singleElement()
                 .satisfies(target -> {
-                    assertThat(target.getMinimumDailyTarget()).isEqualTo(20);
-                    assertThat(target.getRegularDailyCapacity()).isEqualTo(60);
+                    assertThat(target.getMinimumDailyTarget()).isEqualTo(13);
+                    assertThat(target.getRegularDailyCapacity()).isEqualTo(30);
                     assertThat(target.getCreatedBy()).isEqualTo(PlanningTargetDefaults.CREATED_BY);
                 });
 

@@ -6,7 +6,7 @@ public record CustomerRequest(
         String externalId,
         String externalSystem,
         String externalCustomerId,
-        @NotBlank String name,
+        @NotBlank(message = "O nome do cliente é obrigatório.") String name,
         String taxIdentifier,
         String countryCode,
         String countryName,

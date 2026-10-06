@@ -57,6 +57,10 @@ class FrontendStaticFlowTest {
         assertThat(admin).contains("Motorista, se aplicável", "Sem motorista", "As jantes já estão na fábrica?");
         assertThat(admin).contains("newCustomerCountryName", "defaultCountryName()", "countryName: form.newCustomerCountryName.value");
         assertThat(admin).contains("name=\"countryName\"", "countryName: form.countryName.value.trim()");
+        assertThat(admin).contains("formDrafts", "formErrors", "applyOperationError", "fieldErrorMarkup", "aria-live=\"assertive\"");
+        assertThat(admin).contains("captureFormDraft(form, 'manualRequest')", "captureFormDraft(form, 'customer')", "captureFormDraft(form, 'driver')");
+        assertThat(admin).contains("error.fieldErrors", "state.busy.createDriver", "state.busy.createCustomer", "state.busy.createManualRequest");
+        assertThat(admin).contains("Não foi possível criar o pedido manual.", "Não foi possível criar o cliente.", "Não foi possível criar o motorista.");
         assertThat(admin).doesNotContain("newCustomerCountryCode");
         assertThat(admin).contains("MANUAL", "WhatsApp", "sourceLabel");
         assertThat(admin).contains("diagnostics: 'settings/diagnostics'", "audit: 'settings/audit'", "capacity: 'settings/capacity'", "planning: 'dashboard'");
@@ -174,6 +178,8 @@ class FrontendStaticFlowTest {
         assertThat(api).contains("Bearer");
         assertThat(api).contains("payload.message");
         assertThat(api).contains("payload?.code", "payload?.correlationId", "BACKEND_UNAVAILABLE");
+        assertThat(api).contains("error.fieldErrors = payload?.fieldErrors || []");
+        assertThat(api).contains("Correlation ID:");
         assertThat(api).contains("X-Correlation-ID", "credentials", "application/problem+json");
         assertThat(api).contains("fetch(path");
         assertThat(api).contains("response.status === 204");

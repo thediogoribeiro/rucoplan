@@ -41,27 +41,34 @@ public class GlobalExceptionHandler {
         HttpStatus status = switch (ex.errorCode()) {
             case "ENTITY_NOT_FOUND" -> HttpStatus.NOT_FOUND;
             case "FORBIDDEN_OPERATION" -> HttpStatus.FORBIDDEN;
-            case "DUPLICATE_MESSAGE", "OPTIMISTIC_LOCK", "AMBIGUOUS_CUSTOMER", "PRODUCTION_PLAN_CLOSED",
+            case "DUPLICATE_MESSAGE", "DUPLICATE_USER", "DRIVER_DUPLICATE_PHONE", "CUSTOMER_DUPLICATE_VAT",
+                 "CUSTOMER_DUPLICATE_NAME_VAT", "OPTIMISTIC_LOCK", "AMBIGUOUS_CUSTOMER", "PRODUCTION_PLAN_CLOSED",
                  "PRODUCTION_PLAN_CONFLICT" -> HttpStatus.CONFLICT;
             case "AUTHENTICATION_FAILED" -> HttpStatus.UNAUTHORIZED;
             case "PLAN_ITEM_NO_COMPLETED_QUANTITY" -> HttpStatus.UNPROCESSABLE_ENTITY;
             default -> HttpStatus.BAD_REQUEST;
         };
-        return response(status, error(status, ex.errorCode(), ex.getMessage(), request.getRequestURI(), List.of(), correlationId(request)));
+        return response(status, error(status, ex.errorCode(), ex.getMessage(), request.getRequestURI(), List.of(),
+                fieldErrors(ex.errorCode(), ex.getMessage()), correlationId(request)));
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class})
     public ResponseEntity<ErrorResponse> handleValidation(Exception ex, HttpServletRequest request) {
         List<String> details;
+        List<ErrorResponse.FieldError> fieldErrors;
         if (ex instanceof MethodArgumentNotValidException validation) {
             details = validation.getBindingResult().getFieldErrors().stream()
                     .map(field -> field.getField() + ": " + field.getDefaultMessage())
                     .toList();
+            fieldErrors = validation.getBindingResult().getFieldErrors().stream()
+                    .map(field -> new ErrorResponse.FieldError(field.getField(), field.getDefaultMessage()))
+                    .toList();
         } else {
             details = List.of(ex.getMessage());
+            fieldErrors = List.of();
         }
         return response(HttpStatus.BAD_REQUEST, error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
-                "The request is not valid.", request.getRequestURI(), details, correlationId(request)));
+                "O pedido contém dados inválidos.", request.getRequestURI(), details, fieldErrors, correlationId(request)));
     }
 
     @ExceptionHandler({BadCredentialsException.class})
@@ -87,9 +94,17 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException ex, HttpServletRequest request) {
-        return response(HttpStatus.CONFLICT, error(HttpStatus.CONFLICT,
-                "DATA_INTEGRITY_VIOLATION", "The operation conflicts with stored data or constraints.",
-                request.getRequestURI(), List.of(), correlationId(request)));
+        String path = request.getRequestURI();
+        String code = path.contains("/drivers") ? "DRIVER_CONFLICT"
+                : path.contains("/customers") ? "CUSTOMER_CONFLICT"
+                : path.contains("/requests") ? "REQUEST_CONFLICT"
+                : "DATA_INTEGRITY_VIOLATION";
+        String message = path.contains("/drivers") ? "Já existe um motorista com dados equivalentes nesta unidade."
+                : path.contains("/customers") ? "Já existe um cliente com dados equivalentes nesta unidade."
+                : path.contains("/requests") ? "Não foi possível criar o pedido porque os dados entram em conflito com informação existente."
+                : "A operação entra em conflito com dados existentes.";
+        return response(HttpStatus.CONFLICT, error(HttpStatus.CONFLICT, code, message,
+                path, List.of(), fieldErrors(code, message), correlationId(request)));
     }
 
     @ExceptionHandler({CannotGetJdbcConnectionException.class, DataAccessResourceFailureException.class})
@@ -147,7 +162,12 @@ public class GlobalExceptionHandler {
     }
 
     private ErrorResponse error(HttpStatus status, String code, String message, String path, List<String> details, String correlationId) {
-        return ErrorResponse.problem(status, code, message, path, details, correlationId);
+        return error(status, code, message, path, details, List.of(), correlationId);
+    }
+
+    private ErrorResponse error(HttpStatus status, String code, String message, String path, List<String> details,
+                                List<ErrorResponse.FieldError> fieldErrors, String correlationId) {
+        return ErrorResponse.problem(status, code, message, path, details, fieldErrors, correlationId);
     }
 
     private ResponseEntity<ErrorResponse> response(HttpStatus status, ErrorResponse error) {
@@ -167,5 +187,20 @@ public class GlobalExceptionHandler {
             return supplied;
         }
         return UUID.randomUUID().toString();
+    }
+
+    private List<ErrorResponse.FieldError> fieldErrors(String code, String message) {
+        String field = switch (code) {
+            case "CUSTOMER_COUNTRY_REQUIRED", "CUSTOMER_COUNTRY_TOO_LONG" -> "countryName";
+            case "CUSTOMER_DUPLICATE_VAT" -> "taxIdentifier";
+            case "CUSTOMER_DUPLICATE_NAME_VAT" -> "name";
+            case "DUPLICATE_USER" -> "username";
+            case "DRIVER_DUPLICATE_PHONE" -> "phoneNumber";
+            case "LUX_BIPARTITE_NOT_ALLOWED" -> "bipartiteQuantity";
+            case "REQUEST_QUANTITY_BELOW_COMPLETED" -> "wheelQuantities";
+            case "REQUEST_CONFLICT" -> "customerReferenceId";
+            default -> null;
+        };
+        return field == null ? List.of() : List.of(new ErrorResponse.FieldError(field, message));
     }
 }
